@@ -47,7 +47,9 @@ export async function completeLesson(
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
-  await supabase.from("lesson_progress").upsert(
+  // RLS (can_access_lesson) rejects locked or un-enrolled lessons; the
+  // sync_enrollment_completion trigger stamps course completion.
+  const { error } = await supabase.from("lesson_progress").upsert(
     {
       lesson_id: lessonId,
       student_id: user.id,
@@ -55,27 +57,31 @@ export async function completeLesson(
     },
     { onConflict: "lesson_id,student_id" },
   );
-
-  // If that was the last lesson, stamp the enrollment as completed.
-  const [{ data: lessons }, { data: progress }] = await Promise.all([
-    supabase.from("lessons").select("id").eq("course_id", courseId),
-    supabase
-      .from("lesson_progress")
-      .select("lesson_id")
-      .eq("student_id", user.id)
-      .not("completed_at", "is", null),
-  ]);
-  const done = new Set((progress ?? []).map((p) => p.lesson_id));
-  if ((lessons ?? []).every((l) => done.has(l.id))) {
-    await supabase
-      .from("enrollments")
-      .update({ completed_at: new Date().toISOString() })
-      .eq("course_id", courseId)
-      .eq("student_id", user.id);
-  }
+  if (error) throw new Error(error.message);
 
   revalidatePath(`/courses/${courseId}`);
   revalidatePath("/dashboard");
+
+  // Continue straight to the next lesson, or back to the course when done.
+  const { data: lesson } = await supabase
+    .from("lessons")
+    .select("position")
+    .eq("id", lessonId)
+    .single();
+  const { data: next } = await supabase
+    .from("lessons")
+    .select("id")
+    .eq("course_id", courseId)
+    .gt("position", lesson?.position ?? 0)
+    .order("position")
+    .limit(1)
+    .maybeSingle();
+
+  redirect(
+    next
+      ? `/courses/${courseId}/lessons/${next.id}`
+      : `/courses/${courseId}`,
+  );
 }
 
 export async function markNotificationRead(notificationId: string): Promise<void> {

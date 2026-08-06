@@ -36,7 +36,13 @@ export async function signIn(
   if (error) return { error: error.message };
 
   revalidatePath("/", "layout");
-  redirect((formData.get("next") as string) || "/dashboard");
+  // Only same-origin paths — a crafted ?next= must not redirect off-site.
+  const next = formData.get("next");
+  redirect(
+    typeof next === "string" && next.startsWith("/") && !next.startsWith("//")
+      ? next
+      : "/dashboard",
+  );
 }
 
 export async function signUp(

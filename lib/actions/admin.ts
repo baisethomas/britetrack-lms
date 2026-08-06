@@ -163,6 +163,42 @@ export async function bulkEnroll(
   };
 }
 
+export async function linkParentStudent(
+  _prev: AdminFormState,
+  formData: FormData,
+): Promise<AdminFormState> {
+  await requireAdmin();
+  const parentId = String(formData.get("parent_id") ?? "");
+  const studentId = String(formData.get("student_id") ?? "");
+  if (!parentId || !studentId) return { error: "Pick a parent and a student" };
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("parent_student_links")
+    .upsert(
+      { parent_id: parentId, student_id: studentId },
+      { onConflict: "parent_id,student_id", ignoreDuplicates: true },
+    );
+  if (error) return { error: error.message };
+
+  revalidatePath("/admin/users");
+  return { error: null, success: "Parent linked to student" };
+}
+
+export async function unlinkParentStudent(
+  parentId: string,
+  studentId: string,
+): Promise<void> {
+  await requireAdmin();
+  const supabase = await createClient();
+  await supabase
+    .from("parent_student_links")
+    .delete()
+    .eq("parent_id", parentId)
+    .eq("student_id", studentId);
+  revalidatePath("/admin/users");
+}
+
 export async function setUserRole(
   userId: string,
   role: "admin" | "student" | "parent",

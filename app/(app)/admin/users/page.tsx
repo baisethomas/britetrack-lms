@@ -1,8 +1,9 @@
 import type { Metadata } from "next";
 import { createClient } from "@/lib/supabase/server";
-import { setUserRole } from "@/lib/actions/admin";
+import { setUserRole, unlinkParentStudent } from "@/lib/actions/admin";
 import type { UserRole } from "@/lib/types";
 import { Badge, Card } from "@/components/ui";
+import { LinkParentForm } from "./link-parent-form";
 
 export const metadata: Metadata = { title: "Users" };
 
@@ -18,8 +19,16 @@ const roleTone = { admin: "brand", student: "green", parent: "amber" } as const;
 
 export default async function AdminUsersPage() {
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("admin_list_users");
+  const [{ data, error }, { data: links }] = await Promise.all([
+    supabase.rpc("admin_list_users"),
+    supabase.from("parent_student_links").select("parent_id, student_id"),
+  ]);
   const users = (data ?? []) as AdminUser[];
+
+  const label = (u: AdminUser) => `${u.full_name || u.email} (${u.email})`;
+  const byId = new Map(users.map((u) => [u.id, u]));
+  const parents = users.filter((u) => u.role === "parent").map((u) => ({ id: u.id, label: label(u) }));
+  const students = users.filter((u) => u.role === "student").map((u) => ({ id: u.id, label: label(u) }));
 
   return (
     <div className="space-y-6">
@@ -34,6 +43,46 @@ export default async function AdminUsersPage() {
         <p role="alert" className="text-sm text-rose-600">
           Could not load users: {error.message}
         </p>
+      )}
+
+      <LinkParentForm parents={parents} students={students} />
+
+      {(links ?? []).length > 0 && (
+        <Card>
+          <h2 className="font-semibold">Parent–student links</h2>
+          <ul className="mt-3 space-y-2">
+            {(links ?? []).map((l) => {
+              const parent = byId.get(l.parent_id);
+              const student = byId.get(l.student_id);
+              return (
+                <li
+                  key={`${l.parent_id}-${l.student_id}`}
+                  className="flex items-center justify-between gap-3 text-sm"
+                >
+                  <span>
+                    <span className="font-medium">
+                      {parent?.full_name || parent?.email || "Unknown parent"}
+                    </span>{" "}
+                    <span className="text-slate-500">is linked to</span>{" "}
+                    <span className="font-medium">
+                      {student?.full_name || student?.email || "Unknown student"}
+                    </span>
+                  </span>
+                  <form
+                    action={unlinkParentStudent.bind(null, l.parent_id, l.student_id)}
+                  >
+                    <button
+                      type="submit"
+                      className="text-xs text-rose-600 hover:underline"
+                    >
+                      Unlink
+                    </button>
+                  </form>
+                </li>
+              );
+            })}
+          </ul>
+        </Card>
       )}
 
       <Card className="overflow-x-auto p-0">

@@ -34,12 +34,16 @@ future clients (mobile, integrations) can bypass it. Two `security definer`
 functions (`admin_list_users`, `find_students_by_email`) expose auth emails to
 admins only — the API roles cannot read `auth.users` directly.
 
-### Sequential unlocking is derived, not stored
+### Sequential unlocking is derived, not stored — and enforced in RLS
 
 A lesson is "locked" if the course has `sequential_unlock` and the previous
 lesson (by `position`) is not completed. Deriving this from `lesson_progress`
 at read time (`lib/data.ts:getLessonsWithState`) avoids an unlock-state table
-that could drift when admins reorder or insert lessons.
+that could drift when admins reorder or insert lessons. The same rule is
+enforced at the data layer: the `can_access_lesson()` function gates
+`lesson_progress` writes, so a student cannot record progress on a locked
+lesson or on a course they are not enrolled in, even calling the API
+directly.
 
 ### Streaks are computed from completions
 
@@ -71,5 +75,8 @@ live_sessions (course_id, zoom_meeting_id, join_url, recording_url)
 notifications (user_id, type, read_at)
 ```
 
-`enrollments.completed_at` is stamped by the app when the last lesson of a
-course is completed; the admin dashboard's completion rate reads it directly.
+`enrollments.completed_at` is derived by a database trigger
+(`sync_enrollment_completion`) when the last lesson of a course is completed —
+students have no UPDATE policy on enrollments, so it cannot be forged. Adding
+a lesson to a course clears affected completion stamps
+(`reset_completion_on_new_lesson`).

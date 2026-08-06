@@ -27,11 +27,17 @@ language plpgsql
 security definer set search_path = public
 as $$
 begin
+  -- Signup metadata is client-controlled: only self-service roles are honored.
+  -- Admins are promoted explicitly by an existing admin (or via SQL bootstrap).
   insert into public.profiles (id, full_name, role)
   values (
     new.id,
     coalesce(new.raw_user_meta_data ->> 'full_name', ''),
-    coalesce((new.raw_user_meta_data ->> 'role')::public.user_role, 'student')
+    case
+      when new.raw_user_meta_data ->> 'role' in ('student', 'parent')
+        then (new.raw_user_meta_data ->> 'role')::public.user_role
+      else 'student'
+    end
   );
   return new;
 end;
@@ -153,6 +159,112 @@ create table public.notifications (
 create index notifications_user_idx on public.notifications (user_id, created_at desc);
 
 -- ---------------------------------------------------------------------------
+-- Lesson access control
+-- ---------------------------------------------------------------------------
+-- True when the caller may record progress on a lesson: they must be enrolled
+-- in the lesson's published course, and for sequential courses every earlier
+-- lesson must already be completed. Used by lesson_progress RLS so sequencing
+-- is enforced by the database, not just the UI.
+create or replace function public.can_access_lesson(p_lesson_id uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.lessons l
+    join public.courses c on c.id = l.course_id
+    join public.enrollments e
+      on e.course_id = c.id and e.student_id = auth.uid()
+    where l.id = p_lesson_id
+      and c.status = 'published'
+      and (
+        not c.sequential_unlock
+        or not exists (
+          select 1
+          from public.lessons prev
+          where prev.course_id = l.course_id
+            and prev.position < l.position
+            and not exists (
+              select 1
+              from public.lesson_progress lp
+              where lp.lesson_id = prev.id
+                and lp.student_id = auth.uid()
+                and lp.completed_at is not null
+            )
+        )
+      )
+  );
+$$;
+
+-- ---------------------------------------------------------------------------
+-- Enrollment completion is derived, never written by students
+-- ---------------------------------------------------------------------------
+-- Stamps enrollments.completed_at when every lesson of the course is complete,
+-- and clears it again if progress is removed.
+create or replace function public.sync_enrollment_completion()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_course_id uuid;
+  v_student_id uuid;
+  v_all_done boolean;
+begin
+  select l.course_id into v_course_id
+  from public.lessons l
+  where l.id = coalesce(new.lesson_id, old.lesson_id);
+  v_student_id := coalesce(new.student_id, old.student_id);
+  if v_course_id is null then
+    return coalesce(new, old);
+  end if;
+
+  select not exists (
+    select 1
+    from public.lessons l
+    where l.course_id = v_course_id
+      and not exists (
+        select 1
+        from public.lesson_progress lp
+        where lp.lesson_id = l.id
+          and lp.student_id = v_student_id
+          and lp.completed_at is not null
+      )
+  ) into v_all_done;
+
+  update public.enrollments
+  set completed_at = case when v_all_done then coalesce(completed_at, now()) end
+  where course_id = v_course_id and student_id = v_student_id;
+
+  return coalesce(new, old);
+end;
+$$;
+
+create trigger lesson_progress_sync_completion
+  after insert or update or delete on public.lesson_progress
+  for each row execute function public.sync_enrollment_completion();
+
+-- A newly added lesson makes previously "completed" enrollments incomplete.
+create or replace function public.reset_completion_on_new_lesson()
+returns trigger
+language plpgsql
+security definer set search_path = public
+as $$
+begin
+  update public.enrollments
+  set completed_at = null
+  where course_id = new.course_id and completed_at is not null;
+  return new;
+end;
+$$;
+
+create trigger lessons_reset_completion
+  after insert on public.lessons
+  for each row execute function public.reset_completion_on_new_lesson();
+
+-- ---------------------------------------------------------------------------
 -- Row Level Security
 -- ---------------------------------------------------------------------------
 alter table public.profiles enable row level security;
@@ -221,8 +333,8 @@ create policy "students self-enroll" on public.enrollments
     and public.current_user_role() = 'student'
     and exists (select 1 from public.courses c where c.id = course_id and c.status = 'published')
   );
-create policy "students update own enrollment" on public.enrollments
-  for update using (student_id = auth.uid());
+-- No student UPDATE policy on enrollments: completed_at is derived by the
+-- sync_enrollment_completion trigger, never written by clients.
 create policy "admins manage enrollments" on public.enrollments
   for all using (public.current_user_role() = 'admin');
 
@@ -237,9 +349,12 @@ create policy "parents read linked progress" on public.lesson_progress
     )
   );
 create policy "students write own progress" on public.lesson_progress
-  for insert with check (student_id = auth.uid());
+  for insert with check (
+    student_id = auth.uid() and public.can_access_lesson(lesson_id)
+  );
 create policy "students update own progress" on public.lesson_progress
-  for update using (student_id = auth.uid());
+  for update using (student_id = auth.uid())
+  with check (student_id = auth.uid() and public.can_access_lesson(lesson_id));
 create policy "admins read progress" on public.lesson_progress
   for select using (public.current_user_role() = 'admin');
 
@@ -274,7 +389,8 @@ language plpgsql
 security definer set search_path = public
 as $$
 begin
-  if public.current_user_role() <> 'admin' then
+  -- NULL-safe: anonymous callers and users without profiles are refused too.
+  if public.current_user_role() is distinct from 'admin' then
     raise exception 'forbidden';
   end if;
   return query
@@ -292,7 +408,7 @@ language plpgsql
 security definer set search_path = public
 as $$
 begin
-  if public.current_user_role() <> 'admin' then
+  if public.current_user_role() is distinct from 'admin' then
     raise exception 'forbidden';
   end if;
   return query
