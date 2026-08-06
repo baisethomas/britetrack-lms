@@ -1,83 +1,98 @@
 # BriteTrack LMS
 
-## Project Overview
-BriteTrack LMS is a web-based Learning Management System (LMS) with role-based access for administrators, students, and parents. The platform is built using React for the frontend, Supabase for authentication, storage, and database, and is deployed on Vercel.
+A learning management system for programs where **students** take structured
+courses, **parents** follow their children's progress, and **admins** manage
+content and people.
 
-## Key Components
-- **Technical Specifications:** Role-based authentication, feature access, and implementation details for frontend and backend.
-- **User Journeys and Flows:** Progressive lesson unlocking, Zoom integration, notifications, and parent-student management.
-- **Database Schema:** Supabase tables, relationships, RLS policies, functions, triggers, and storage buckets.
-- **Edge Cases and Decision Points:** Handling user, course, lesson, Zoom, notification, and progress edge cases.
-- **Scalable Architecture:** Frontend structure, backend API, database scaling, integration, and DevOps.
+Built as a single [Next.js](https://nextjs.org) App Router application on
+[Supabase](https://supabase.com) (Postgres, Auth, RLS, Edge Functions), styled
+with Tailwind CSS v4.
 
-## Implementation Approach
-The project follows a phased strategy:
-1. **MVP (1-100 Users):** Core user management, basic course/lesson functionality, progress tracking, notifications.
-2. **Growth (100-1,000 Users):** Enhanced Zoom, advanced progress, reporting, performance.
-3. **Scale (1,000-10,000 Users):** Caching, DB optimizations, mobile, integrations.
-4. **Enterprise (10,000+ Users):** Sharding, analytics, native mobile, enterprise features.
+## Features
 
-## Next Steps
-1. Review detailed documentation in `/Documentation`
-2. Prioritize MVP features
-3. Set up development environment (Supabase, Vercel)
-4. Implement core user management
-5. Develop basic course and lesson features
+- **Role-based experience** — student, parent, and admin each get their own
+  dashboard and navigation from one codebase.
+- **Guided learning** — courses can unlock lessons sequentially, so the next
+  step is always obvious. A "Continue learning" card resumes the current course
+  at the first incomplete lesson.
+- **Visible progress** — progress rings, per-course bars, and a Duolingo-style
+  daily streak computed from lesson completions.
+- **Focused course player** — lesson content (video/article/quiz/live session)
+  with a curriculum rail, previous/next navigation, and one-tap "mark complete
+  & continue".
+- **Parents as first-class users** — linked to students by an admin; they see
+  course progress and streaks, never credentials.
+- **Admin tooling** — course/lesson authoring with draft → publish → archive
+  lifecycle, user role management, bulk enrollment by pasted email list, and an
+  overview dashboard (students, courses, enrollments, completion rate).
+- **Live sessions** — Zoom meetings attached to courses; a webhook edge
+  function verifies Zoom's HMAC signature and stores recording links
+  automatically.
+- **Notifications** — in-app notification center plus an edge function that
+  fans out email via Resend.
 
-## Technology Stack
-- **Frontend:** React, Next.js, Tailwind CSS
-- **Backend:** Node.js (Express, Mongoose planned for future API), Supabase
-- **Database:** Supabase (PostgreSQL)
-- **Authentication:** Supabase Auth
-- **Storage:** Supabase Storage
-- **Deployment:** Vercel
-- **CI/CD:** GitHub Actions
-- **API Integration:** Zoom OAuth API
+## Architecture
 
-## Setup Instructions
-1. Clone the repository:
+```
+app/                  Next.js App Router
+  (auth)/             login, signup, onboarding
+  (app)/              authenticated shell (sidebar, role-aware nav)
+    dashboard/        student / parent / admin dashboards
+    courses/          catalog, course detail, lesson player
+    admin/            course authoring, users, bulk enrollment
+lib/
+  supabase/           browser/server/middleware clients (@supabase/ssr)
+  actions/            server actions (auth, learning, admin)
+  data.ts             shared server-side queries (progress, streaks, unlocking)
+components/           UI primitives and shell
+supabase/
+  migrations/         schema + RLS policies (source of truth for access control)
+  functions/          Deno edge functions (Zoom webhooks, notification emails)
+```
+
+There is **no separate API server**: authorization lives in Postgres RLS
+policies, reads happen in server components, and writes go through server
+actions. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the reasoning
+and [`docs/UX_NOTES.md`](docs/UX_NOTES.md) for the design patterns the UI
+follows.
+
+## Getting started
+
+1. Create a Supabase project and apply the migration:
+
    ```bash
-   git clone https://github.com/baisethomas/britetrack-lms.git
-   cd britetrack-lms
+   npx supabase link --project-ref <your-project-ref>
+   npx supabase db push
    ```
-2. Install dependencies for frontend and backend:
+
+2. Configure environment variables (copy `.env.example` to `.env.local` and
+   fill in your Supabase URL + anon key).
+
+3. Install and run:
+
    ```bash
-   cd frontend && npm install
-   cd ../backend && npm install
+   npm install
+   npm run dev
    ```
-3. Set up environment variables (see `.env.example` in each directory).
-4. Start the development servers:
-   - Frontend: `npm run dev` (in `frontend`)
-   - Backend: `npm run dev` (in `backend`)
 
-## Running Locally
-- Frontend: [http://localhost:3000](http://localhost:3000)
-- Backend: [http://localhost:5000](http://localhost:5000) (planned)
+4. Sign up as a student, then promote your account to admin once
+   (`update profiles set role = 'admin' where id = '<your-user-id>';` in the
+   SQL editor). Admins can manage every other role from the UI.
 
-## Testing
-- Run tests with `npm test` in each directory.
-- Lint and format code with `npm run lint` and `npm run format`.
+### Edge functions
 
-## Deployment
-- CI/CD is set up with GitHub Actions (`.github/workflows`).
-- Deploy frontend to Vercel (recommended).
-- Backend deployment: configure as needed (Heroku, Render, etc.).
+```bash
+npx supabase functions deploy send-notification-emails
+npx supabase functions deploy process-zoom-webhooks
+npx supabase secrets set RESEND_API_KEY=... ZOOM_WEBHOOK_SECRET_TOKEN=...
+```
 
-## Contribution Guidelines
-- Fork the repo and create a feature branch.
-- Follow code style guidelines (ESLint, Prettier).
-- Write tests for new features.
-- Submit a pull request with a clear description.
+## Development
 
-## License
-MIT
+- `npm run dev` — local dev server
+- `npm run lint` — ESLint (flat config, Next presets)
+- `npm run typecheck` — strict TypeScript
+- `npm run build` — production build
 
-## Documentation Structure
-- `Documentation/technical_specifications.md` - Role specifications
-- `Documentation/user_journeys_and_flows.md` - User journeys
-- `Documentation/database_schema.md` - Database design
-- `Documentation/edge_cases_and_decisions.md` - Edge cases
-- `Documentation/scalable_architecture.md` - Architecture
-- `Documentation/todo.md` - Implementation checklist
-
-For more details, see the `/Documentation` folder and the executive summary in `Documentation/LMS Implementation Plan - Executive Summary.md`. 
+CI (`.github/workflows/ci.yml`) runs all three on every push and PR.
+Deploys are handled by Vercel's git integration.
