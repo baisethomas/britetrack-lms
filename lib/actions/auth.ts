@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
+import { safeRedirectPath } from "@/lib/safe-redirect";
 
 const credentialsSchema = z.object({
   email: z.string().email("Enter a valid email address"),
@@ -36,13 +37,7 @@ export async function signIn(
   if (error) return { error: error.message };
 
   revalidatePath("/", "layout");
-  // Only same-origin paths — a crafted ?next= must not redirect off-site.
-  const next = formData.get("next");
-  redirect(
-    typeof next === "string" && next.startsWith("/") && !next.startsWith("//")
-      ? next
-      : "/dashboard",
-  );
+  redirect(safeRedirectPath(formData.get("next")));
 }
 
 export async function signUp(
