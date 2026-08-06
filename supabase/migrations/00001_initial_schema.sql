@@ -364,13 +364,23 @@ create policy "students update own progress" on public.lesson_progress
 create policy "admins read progress" on public.lesson_progress
   for select using (public.current_user_role() = 'admin');
 
--- Live sessions follow course visibility
-create policy "read sessions of published courses" on public.live_sessions
+-- Live sessions carry Zoom join/recording URLs: enrolled students and
+-- linked parents only, not everyone who can browse the course.
+create policy "students read sessions of enrolled courses" on public.live_sessions
   for select using (
     exists (
-      select 1 from public.courses c
-      where c.id = live_sessions.course_id and c.status = 'published'
-    ) and auth.uid() is not null
+      select 1 from public.enrollments e
+      where e.course_id = live_sessions.course_id and e.student_id = auth.uid()
+    )
+  );
+create policy "parents read sessions of linked enrollments" on public.live_sessions
+  for select using (
+    exists (
+      select 1
+      from public.enrollments e
+      join public.parent_student_links l on l.student_id = e.student_id
+      where e.course_id = live_sessions.course_id and l.parent_id = auth.uid()
+    )
   );
 create policy "admins manage live sessions" on public.live_sessions
   for all using (public.current_user_role() = 'admin');
