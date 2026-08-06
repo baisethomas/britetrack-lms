@@ -305,13 +305,19 @@ create policy "read published courses" on public.courses
 create policy "admins manage courses" on public.courses
   for all using (public.current_user_role() = 'admin');
 
--- Lessons follow their course's visibility
-create policy "read lessons of published courses" on public.lessons
+-- Lesson content (body, video URL) is only readable when the caller may
+-- actually take the lesson — enrolled and, for sequential courses, unlocked.
+-- Browsing metadata comes from the lesson_catalog view below instead.
+create policy "students read accessible lessons" on public.lessons
+  for select using (public.can_access_lesson(id));
+create policy "parents read lessons of linked enrollments" on public.lessons
   for select using (
     exists (
-      select 1 from public.courses c
-      where c.id = lessons.course_id and c.status = 'published'
-    ) and auth.uid() is not null
+      select 1
+      from public.enrollments e
+      join public.parent_student_links l on l.student_id = e.student_id
+      where e.course_id = lessons.course_id and l.parent_id = auth.uid()
+    )
   );
 create policy "admins manage lessons" on public.lessons
   for all using (public.current_user_role() = 'admin');
@@ -376,6 +382,21 @@ create policy "update own notifications" on public.notifications
   for update using (user_id = auth.uid());
 create policy "admins insert notifications" on public.notifications
   for insert with check (public.current_user_role() = 'admin');
+
+-- ---------------------------------------------------------------------------
+-- Lesson catalog view (safe browsing metadata, no content)
+-- ---------------------------------------------------------------------------
+-- Owner-rights view: exposes only non-sensitive columns of lessons in
+-- published courses so signed-in users can browse curricula before enrolling.
+create view public.lesson_catalog as
+  select l.id, l.course_id, l.title, l.summary, l.content_type,
+         l.duration_minutes, l.position
+  from public.lessons l
+  join public.courses c on c.id = l.course_id
+  where c.status = 'published';
+
+revoke all on public.lesson_catalog from anon;
+grant select on public.lesson_catalog to authenticated;
 
 -- ---------------------------------------------------------------------------
 -- Admin helpers

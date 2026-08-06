@@ -49,6 +49,14 @@ export default async function LessonPage({
     );
   }
 
+  // Lesson body and video live behind RLS (can_access_lesson) — this read
+  // only succeeds for enrolled-and-unlocked students, parents, or admins.
+  const { data: full } = await supabase
+    .from("lessons")
+    .select("content, video_url")
+    .eq("id", lesson.id)
+    .maybeSingle();
+
   // Record that the student opened this lesson.
   if (profile.role === "student" && !lesson.completed) {
     await startLesson(lesson.id);
@@ -81,10 +89,10 @@ export default async function LessonPage({
             <p className="mt-1 text-sm text-slate-500">{lesson.summary}</p>
           )}
 
-          {lesson.content_type === "video" && lesson.video_url && (
+          {lesson.content_type === "video" && full?.video_url && (
             <div className="mt-4 aspect-video overflow-hidden rounded-xl bg-slate-900">
               <iframe
-                src={lesson.video_url}
+                src={full.video_url}
                 title={lesson.title}
                 className="size-full"
                 allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -93,9 +101,9 @@ export default async function LessonPage({
             </div>
           )}
 
-          {lesson.content && (
+          {full?.content && (
             <div className="mt-4 text-sm leading-relaxed whitespace-pre-wrap text-slate-700">
-              {lesson.content}
+              {full.content}
             </div>
           )}
         </Card>

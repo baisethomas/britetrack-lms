@@ -4,8 +4,8 @@ import { createClient } from "@/lib/supabase/server";
 import type {
   Course,
   Enrollment,
-  Lesson,
   LessonProgress,
+  LessonSummary,
   Profile,
 } from "@/lib/types";
 
@@ -43,7 +43,7 @@ export async function getCoursesWithProgress(
     await Promise.all([
       supabase.from("courses").select("*").eq("status", "published").order("created_at"),
       supabase.from("enrollments").select("*").eq("student_id", studentId),
-      supabase.from("lessons").select("id, course_id"),
+      supabase.from("lesson_catalog").select("id, course_id"),
       supabase
         .from("lesson_progress")
         .select("lesson_id, completed_at")
@@ -64,19 +64,27 @@ export async function getCoursesWithProgress(
   });
 }
 
-export interface LessonWithState extends Lesson {
+export interface LessonWithState extends LessonSummary {
   completed: boolean;
   locked: boolean;
 }
 
-/** A course's lessons with per-student completed/locked state (sequential unlock). */
+/**
+ * A course's lessons with per-student completed/locked state (sequential
+ * unlock). Reads the lesson_catalog view — metadata only; lesson content is
+ * fetched separately, gated by RLS.
+ */
 export async function getLessonsWithState(
   course: Course,
   studentId: string,
 ): Promise<LessonWithState[]> {
   const supabase = await createClient();
   const [{ data: lessons }, { data: progress }] = await Promise.all([
-    supabase.from("lessons").select("*").eq("course_id", course.id).order("position"),
+    supabase
+      .from("lesson_catalog")
+      .select("*")
+      .eq("course_id", course.id)
+      .order("position"),
     supabase.from("lesson_progress").select("*").eq("student_id", studentId),
   ]);
 
@@ -87,7 +95,7 @@ export async function getLessonsWithState(
   );
 
   let previousCompleted = true;
-  return ((lessons ?? []) as Lesson[]).map((lesson) => {
+  return ((lessons ?? []) as LessonSummary[]).map((lesson) => {
     const completed = completedIds.has(lesson.id);
     const locked = course.sequential_unlock ? !previousCompleted && !completed : false;
     previousCompleted = completed;

@@ -45,6 +45,12 @@ export interface Lesson {
   updated_at: string;
 }
 
+/** Row of the lesson_catalog view — browsing metadata without lesson content. */
+export type LessonSummary = Omit<
+  Lesson,
+  "content" | "video_url" | "created_at" | "updated_at"
+>;
+
 export interface Enrollment {
   id: string;
   course_id: string;

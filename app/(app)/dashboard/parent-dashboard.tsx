@@ -37,7 +37,7 @@ export async function ParentDashboard({ profile }: { profile: Profile }) {
             .from("enrollments")
             .select("*, courses(title)")
             .eq("student_id", child.id),
-          supabase.from("lessons").select("id, course_id"),
+          supabase.from("lesson_catalog").select("id, course_id"),
           supabase
             .from("lesson_progress")
             .select("lesson_id, completed_at")
