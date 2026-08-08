@@ -1,6 +1,7 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { computeStreak, deriveLessonState } from "@/lib/progress";
 import type {
   Course,
   Enrollment,
@@ -94,13 +95,11 @@ export async function getLessonsWithState(
       .map((p: LessonProgress) => p.lesson_id),
   );
 
-  let previousCompleted = true;
-  return ((lessons ?? []) as LessonSummary[]).map((lesson) => {
-    const completed = completedIds.has(lesson.id);
-    const locked = course.sequential_unlock ? !previousCompleted && !completed : false;
-    previousCompleted = completed;
-    return { ...lesson, completed, locked };
-  });
+  return deriveLessonState(
+    (lessons ?? []) as LessonSummary[],
+    completedIds,
+    course.sequential_unlock,
+  );
 }
 
 /** Consecutive-day learning streak ending today or yesterday. */
@@ -114,19 +113,5 @@ export async function getStreak(studentId: string): Promise<number> {
     .order("completed_at", { ascending: false })
     .limit(365);
 
-  const days = new Set(
-    (data ?? []).map((p) => (p.completed_at as string).slice(0, 10)),
-  );
-  if (days.size === 0) return 0;
-
-  const day = new Date();
-  const key = (d: Date) => d.toISOString().slice(0, 10);
-  // A streak may end today or yesterday (today's session not done yet).
-  if (!days.has(key(day))) day.setUTCDate(day.getUTCDate() - 1);
-  let streak = 0;
-  while (days.has(key(day))) {
-    streak += 1;
-    day.setUTCDate(day.getUTCDate() - 1);
-  }
-  return streak;
+  return computeStreak((data ?? []).map((p) => p.completed_at as string));
 }

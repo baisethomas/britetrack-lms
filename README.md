@@ -93,6 +93,14 @@ npx supabase secrets set RESEND_API_KEY=... ZOOM_WEBHOOK_SECRET_TOKEN=...
 - `npm run lint` — ESLint (flat config, Next presets)
 - `npm run typecheck` — strict TypeScript
 - `npm run build` — production build
+- `npm run test:unit` — pure logic (progress, streaks, redirect validation)
+- `npm run test:db` — every RLS policy against a real Postgres
+  (`npm run db:test:up` first)
 
-CI (`.github/workflows/ci.yml`) runs all three on every push and PR.
-Deploys are handled by Vercel's git integration.
+Because authorization lives in Postgres rather than in application code, the
+database suite is the one that matters most — see
+[`docs/TESTING.md`](docs/TESTING.md).
+
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, unit tests, and the
+build on every push and PR, plus the RLS suite against a Postgres service
+container. Deploys are handled by Vercel's git integration.
