@@ -46,6 +46,31 @@ describe("assertDisposableDatabase", () => {
     }
   });
 
+  it("refuses names that merely contain the letters 'test'", () => {
+    // "test" has to be its own word — a substring match would accept real
+    // databases like `attest` or `contest`.
+    for (const name of [
+      "attest",
+      "protest",
+      "latest",
+      "contest",
+      "testimonials",
+      "PROTEST",
+    ]) {
+      expect(() =>
+        assertDisposableDatabase(`postgresql://u@localhost:5432/${name}`),
+      ).toThrow(/Refusing/);
+    }
+  });
+
+  it("accepts 'test' as a word regardless of case or separator", () => {
+    for (const name of ["TEST", "Britetrack_Test", "app.test.db", "test2"]) {
+      expect(() =>
+        assertDisposableDatabase(`postgresql://u@localhost:5432/${name}`),
+      ).not.toThrow();
+    }
+  });
+
   it("refuses an unparseable connection string", () => {
     expect(() => assertDisposableDatabase("not a url")).toThrow(/Refusing/);
   });

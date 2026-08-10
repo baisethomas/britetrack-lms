@@ -9,8 +9,12 @@
 
 export const DESTRUCTIVE_OVERRIDE_ENV = "BRITETRACK_ALLOW_DESTRUCTIVE_DB";
 
-/** Database names we accept without an explicit override. */
-const DISPOSABLE_NAME = /(^|[^a-z])test([^a-z]|$)|test$/i;
+/**
+ * Database names we accept without an explicit override: "test" must appear
+ * as its own word, so britetrack_test and lms-test-db qualify while attest,
+ * protest, latest, and contest do not.
+ */
+const DISPOSABLE_NAME = /(^|[^a-z])test([^a-z]|$)/i;
 
 export interface SafetyOptions {
   /** Value of the override environment variable, if set. */
