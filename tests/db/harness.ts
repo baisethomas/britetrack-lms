@@ -1,7 +1,14 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { Client, Pool, type PoolClient } from "pg";
-import { assertDisposableDatabase, DESTRUCTIVE_OVERRIDE_ENV } from "./safety";
+import {
+  assertDisposableDatabase,
+  assertRebuildableContents,
+  databaseNameFrom,
+  DESTRUCTIVE_OVERRIDE_ENV,
+  HARNESS_MARKER,
+  type DatabaseContents,
+} from "./safety";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 
@@ -24,17 +31,29 @@ let pool: Pool | undefined;
  * so no run inherits stale objects from a previous one.
  */
 export async function buildSchema(): Promise<void> {
-  // Never let a stray DATABASE_URL turn this into a production wipe.
-  assertDisposableDatabase(DATABASE_URL, {
-    override: process.env[DESTRUCTIVE_OVERRIDE_ENV],
-  });
+  // Never let a stray DATABASE_URL turn this into a production wipe. The name
+  // check fails fast without connecting; the contents check below is the one
+  // that actually protects a real database that happens to be named "test".
+  const override = process.env[DESTRUCTIVE_OVERRIDE_ENV];
+  assertDisposableDatabase(DATABASE_URL, { override });
 
   const admin = new Client({ connectionString: DATABASE_URL });
   await admin.connect();
   try {
+    assertRebuildableContents(
+      await inspectDatabase(admin),
+      databaseNameFrom(DATABASE_URL),
+      { override },
+    );
+
     await admin.query("drop schema if exists public cascade");
     await admin.query("drop schema if exists auth cascade");
     await admin.query("create schema public");
+    // Claim the database so subsequent runs recognise it as ours.
+    // COMMENT ON takes no bind parameters, hence the escaped literal.
+    await admin.query(
+      `comment on schema public is ${admin.escapeLiteral(HARNESS_MARKER)}`,
+    );
 
     const migrations = (await readdir(path.join(ROOT, MIGRATIONS_DIR)))
       .filter((name) => name.endsWith(".sql"))
@@ -48,6 +67,31 @@ export async function buildSchema(): Promise<void> {
   } finally {
     await admin.end();
   }
+}
+
+/**
+ * Look at what the target database already holds, so the harness can refuse
+ * to drop schemas belonging to somebody else's project.
+ */
+async function inspectDatabase(admin: Client): Promise<DatabaseContents> {
+  const { rows } = await admin.query<{
+    marker: string | null;
+    relation_count: string;
+  }>(`
+    select
+      (select obj_description(n.oid, 'pg_namespace')
+         from pg_namespace n where n.nspname = 'public') as marker,
+      (select count(*)
+         from pg_class c
+         join pg_namespace n on n.oid = c.relnamespace
+        where n.nspname in ('public', 'auth')
+          and c.relkind in ('r', 'p', 'v', 'm', 'S')) as relation_count
+  `);
+  const [row] = rows;
+  return {
+    hasHarnessMarker: row?.marker === HARNESS_MARKER,
+    relationCount: Number(row?.relation_count ?? 0),
+  };
 }
 
 /** Open the connection pool for a test file. */

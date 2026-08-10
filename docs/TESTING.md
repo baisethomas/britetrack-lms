@@ -39,16 +39,38 @@ DATABASE_URL=postgresql://user:pass@localhost:5432/britetrack_test npm run test:
 ### Destructive-target guard
 
 The harness DROPs the `public` and `auth` schemas with `CASCADE` on every run,
-so a `DATABASE_URL` aimed at a real project would destroy it. It therefore
-refuses to start unless the database name contains `test` — which rules out
-Supabase's default `postgres` database:
+so a `DATABASE_URL` aimed at a real project would destroy it. Two gates stand
+in front of that.
+
+**1. The database name.** Checked before connecting, so a typo fails fast.
+The name must contain `test` as a whole word, which rules out Supabase's
+default `postgres` database:
 
 ```
 Refusing to rebuild the schema in database "postgres".
 ```
 
-Set `BRITETRACK_ALLOW_DESTRUCTIVE_DB=1` to override, only for a database you
-are certain is disposable.
+**2. What the database actually contains.** A naming convention is only a
+convention — somebody's real database may well be called `test`. So after
+connecting, the harness proceeds only if the database is empty, or if it
+carries the marker comment this harness stamps on `public` after each
+rebuild. Anything else is somebody else's data:
+
+```
+Refusing to rebuild the schema in database "acme_test".
+
+It contains 40 object(s) that this harness did not create,
+and dropping the public and auth schemas with CASCADE would destroy them.
+```
+
+So a fresh database is adopted and marked on first run, later runs recognise
+their own marker, and a populated database the harness does not own is
+refused regardless of its name.
+
+`BRITETRACK_ALLOW_DESTRUCTIVE_DB=1` bypasses both, for a database you are
+certain is disposable. It is deliberately *not* required for the normal
+workflow: a guard that every documented command had to disable would be set
+permanently and would stop meaning anything.
 
 ### How the harness works
 

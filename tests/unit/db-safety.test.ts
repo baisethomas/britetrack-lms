@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   assertDisposableDatabase,
+  assertRebuildableContents,
   databaseNameFrom,
 } from "../db/safety";
 
@@ -94,5 +95,55 @@ describe("assertDisposableDatabase", () => {
         /Refusing/,
       );
     }
+  });
+});
+
+describe("assertRebuildableContents", () => {
+  it("allows an empty database", () => {
+    expect(() =>
+      assertRebuildableContents(
+        { hasHarnessMarker: false, relationCount: 0 },
+        "britetrack_test",
+      ),
+    ).not.toThrow();
+  });
+
+  it("allows a database this harness already built", () => {
+    expect(() =>
+      assertRebuildableContents(
+        { hasHarnessMarker: true, relationCount: 12 },
+        "britetrack_test",
+      ),
+    ).not.toThrow();
+  });
+
+  it("refuses a populated database the harness does not own", () => {
+    // The case a name check alone cannot catch: somebody's real database
+    // that happens to be called "test".
+    expect(() =>
+      assertRebuildableContents(
+        { hasHarnessMarker: false, relationCount: 40 },
+        "test",
+      ),
+    ).toThrow(/did not create/);
+  });
+
+  it("reports the database name and object count", () => {
+    expect(() =>
+      assertRebuildableContents(
+        { hasHarnessMarker: false, relationCount: 40 },
+        "acme_test",
+      ),
+    ).toThrow(/"acme_test"[\s\S]*40 object/);
+  });
+
+  it("allows a populated foreign database with an explicit opt-in", () => {
+    expect(() =>
+      assertRebuildableContents(
+        { hasHarnessMarker: false, relationCount: 40 },
+        "test",
+        { override: "1" },
+      ),
+    ).not.toThrow();
   });
 });
