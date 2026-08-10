@@ -36,6 +36,20 @@ would rather not use Docker:
 DATABASE_URL=postgresql://user:pass@localhost:5432/britetrack_test npm run test:db
 ```
 
+### Destructive-target guard
+
+The harness DROPs the `public` and `auth` schemas with `CASCADE` on every run,
+so a `DATABASE_URL` aimed at a real project would destroy it. It therefore
+refuses to start unless the database name contains `test` — which rules out
+Supabase's default `postgres` database:
+
+```
+Refusing to rebuild the schema in database "postgres".
+```
+
+Set `BRITETRACK_ALLOW_DESTRUCTIVE_DB=1` to override, only for a database you
+are certain is disposable.
+
 ### How the harness works
 
 A real Supabase project supplies an `auth` schema and the `anon` /

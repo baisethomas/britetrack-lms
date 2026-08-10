@@ -1,6 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { Client, Pool, type PoolClient } from "pg";
+import { assertDisposableDatabase, DESTRUCTIVE_OVERRIDE_ENV } from "./safety";
 
 const ROOT = path.resolve(import.meta.dirname, "../..");
 
@@ -23,6 +24,11 @@ let pool: Pool | undefined;
  * so no run inherits stale objects from a previous one.
  */
 export async function buildSchema(): Promise<void> {
+  // Never let a stray DATABASE_URL turn this into a production wipe.
+  assertDisposableDatabase(DATABASE_URL, {
+    override: process.env[DESTRUCTIVE_OVERRIDE_ENV],
+  });
+
   const admin = new Client({ connectionString: DATABASE_URL });
   await admin.connect();
   try {
