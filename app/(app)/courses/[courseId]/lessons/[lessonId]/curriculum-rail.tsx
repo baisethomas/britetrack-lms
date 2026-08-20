@@ -1,61 +1,89 @@
 import Link from "next/link";
-import { CheckCircle2, Circle, Lock } from "lucide-react";
-import { Card } from "@/components/ui";
+import { CheckCircle2, Circle, Lock, PlayCircle } from "lucide-react";
+import { completionPercent, formatDuration } from "@/lib/progress";
+import { ProgressBar } from "@/components/ui";
 
 interface RailLesson {
   id: string;
   title: string;
   position: number;
+  duration_minutes: number;
   completed: boolean;
   locked: boolean;
 }
 
+/**
+ * Course contents alongside the lesson. Reference players (Coursera, Podia,
+ * Squarespace) put this on the left with the course title and a completion
+ * count at the top, and carry each lesson's duration on the row so learners
+ * can judge what fits in the time they have.
+ */
 export function CurriculumRail({
   courseId,
+  courseTitle,
   currentLessonId,
   lessons,
 }: {
   courseId: string;
+  courseTitle: string;
   currentLessonId: string;
   lessons: RailLesson[];
 }) {
+  const completed = lessons.filter((l) => l.completed).length;
+
   return (
     <aside className="hidden lg:block">
-      <Card className="sticky top-6 p-3">
-        <h2 className="px-2 pt-1 pb-2 text-xs font-semibold tracking-wide text-slate-500 uppercase">
-          Course content
-        </h2>
-        <ol className="space-y-0.5">
-          {lessons.map((l) => {
-            const current = l.id === currentLessonId;
+      <div className="sticky top-6 overflow-hidden rounded-card border border-line bg-raised shadow-card">
+        <div className="border-b border-line p-4">
+          <h2 className="truncate text-sm font-semibold text-ink">{courseTitle}</h2>
+          <p className="mt-1 text-xs text-muted tabular-nums">
+            {completed} of {lessons.length} completed
+          </p>
+          <ProgressBar
+            value={completionPercent(completed, lessons.length)}
+            className="mt-2"
+          />
+        </div>
+
+        <ol className="max-h-[60vh] overflow-y-auto p-2">
+          {lessons.map((lesson) => {
+            const current = lesson.id === currentLessonId;
             const inner = (
-              <span className="flex items-center gap-2.5">
-                {l.completed ? (
-                  <CheckCircle2 className="size-4 shrink-0 text-emerald-500" aria-hidden />
-                ) : l.locked ? (
-                  <Lock className="size-4 shrink-0 text-slate-300" aria-hidden />
+              <>
+                {lesson.completed ? (
+                  <CheckCircle2 className="size-4 shrink-0 text-success" aria-hidden />
+                ) : current ? (
+                  <PlayCircle className="size-4 shrink-0 text-accent" aria-hidden />
+                ) : lesson.locked ? (
+                  <Lock className="size-4 shrink-0 text-subtle" aria-hidden />
                 ) : (
-                  <Circle className="size-4 shrink-0 text-slate-300" aria-hidden />
+                  <Circle className="size-4 shrink-0 text-subtle" aria-hidden />
                 )}
-                <span className="truncate">
-                  {l.position}. {l.title}
+                <span className="min-w-0 flex-1 truncate">
+                  {lesson.position}. {lesson.title}
                 </span>
-              </span>
+                {lesson.duration_minutes > 0 && (
+                  <span className="shrink-0 text-xs text-subtle tabular-nums">
+                    {formatDuration(lesson.duration_minutes)}
+                  </span>
+                )}
+              </>
             );
+
             return (
-              <li key={l.id}>
-                {l.locked ? (
-                  <span className="block rounded-lg px-2 py-1.5 text-sm text-slate-400">
+              <li key={lesson.id}>
+                {lesson.locked ? (
+                  <span className="flex items-center gap-2.5 rounded-control px-2 py-2 text-sm text-subtle">
                     {inner}
                   </span>
                 ) : (
                   <Link
-                    href={`/courses/${courseId}/lessons/${l.id}`}
+                    href={`/courses/${courseId}/lessons/${lesson.id}`}
                     aria-current={current ? "page" : undefined}
-                    className={`block rounded-lg px-2 py-1.5 text-sm ${
+                    className={`flex items-center gap-2.5 rounded-control px-2 py-2 text-sm transition-colors ${
                       current
-                        ? "bg-brand-50 font-medium text-brand-700"
-                        : "text-slate-600 hover:bg-slate-50"
+                        ? "bg-accent-soft font-medium text-ink-accent"
+                        : "text-muted hover:bg-hover hover:text-ink"
                     }`}
                   >
                     {inner}
@@ -65,7 +93,7 @@ export function CurriculumRail({
             );
           })}
         </ol>
-      </Card>
+      </div>
     </aside>
   );
 }

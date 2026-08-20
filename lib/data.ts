@@ -1,7 +1,12 @@
 import { cache } from "react";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { computeStreak, deriveLessonState } from "@/lib/progress";
+import {
+  buildStreakDays,
+  computeStreak,
+  deriveLessonState,
+  type StreakDay,
+} from "@/lib/progress";
 import type {
   Course,
   Enrollment,
@@ -102,8 +107,20 @@ export async function getLessonsWithState(
   );
 }
 
-/** Consecutive-day learning streak ending today or yesterday. */
-export async function getStreak(studentId: string): Promise<number> {
+export interface StreakSummary {
+  /** Consecutive-day streak ending today or yesterday. */
+  streak: number;
+  /** The trailing seven days, oldest first. */
+  days: StreakDay[];
+}
+
+/**
+ * Streak count plus the week's activity strip, from a single read — the
+ * dashboard shows both, and they derive from the same completion dates.
+ */
+export async function getStreakSummary(
+  studentId: string,
+): Promise<StreakSummary> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("lesson_progress")
@@ -113,5 +130,6 @@ export async function getStreak(studentId: string): Promise<number> {
     .order("completed_at", { ascending: false })
     .limit(365);
 
-  return computeStreak((data ?? []).map((p) => p.completed_at as string));
+  const dates = (data ?? []).map((p) => p.completed_at as string);
+  return { streak: computeStreak(dates), days: buildStreakDays(dates) };
 }

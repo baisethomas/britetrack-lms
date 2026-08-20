@@ -7,9 +7,9 @@ import { Badge, ButtonLink, Card } from "@/components/ui";
 export const metadata: Metadata = { title: "Manage courses" };
 
 const statusTone = {
-  draft: "amber",
-  published: "green",
-  archived: "slate",
+  draft: "warning",
+  published: "success",
+  archived: "neutral",
 } as const;
 
 export default async function AdminCoursesPage() {
@@ -23,17 +23,17 @@ export default async function AdminCoursesPage() {
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Courses</h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <h1 className="text-display font-bold">Courses</h1>
+          <p className="mt-1 text-sm text-muted">
             Draft, publish, and organize course content.
           </p>
         </div>
         <ButtonLink href="/admin/courses/new">New course</ButtonLink>
       </div>
 
-      <Card className="divide-y divide-slate-100 p-0">
+      <Card className="divide-y divide-line p-0">
         {(courses ?? []).length === 0 && (
-          <p className="p-6 text-sm text-slate-500">
+          <p className="p-6 text-sm text-muted">
             No courses yet — create your first one.
           </p>
         )}
@@ -41,11 +41,11 @@ export default async function AdminCoursesPage() {
           <Link
             key={course.id}
             href={`/admin/courses/${course.id}`}
-            className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-slate-50"
+            className="flex items-center justify-between gap-4 px-5 py-4 hover:bg-hover"
           >
             <div className="min-w-0">
               <div className="truncate text-sm font-medium">{course.title}</div>
-              <div className="mt-0.5 text-xs text-slate-500">
+              <div className="mt-0.5 text-xs text-muted">
                 {course.category ?? "Uncategorized"} · updated{" "}
                 {new Date(course.updated_at).toLocaleDateString()}
               </div>

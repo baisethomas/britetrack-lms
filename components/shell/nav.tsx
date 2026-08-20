@@ -63,13 +63,49 @@ export function NavLinks({ items }: { items: NavItem[] }) {
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
-            className={`flex items-center gap-3 rounded-lg px-3 py-2 text-sm font-medium transition-colors ${
+            className={`flex items-center gap-3 rounded-control px-3 py-2 text-sm font-medium transition-colors ${
               active
-                ? "bg-brand-50 text-brand-700"
-                : "text-slate-600 hover:bg-slate-100 hover:text-slate-900"
+                ? "bg-accent-soft text-ink-accent"
+                : "text-muted hover:bg-hover hover:text-ink"
             }`}
           >
             <Icon className="size-4.5" aria-hidden />
+            {item.label}
+          </Link>
+        );
+      })}
+    </nav>
+  );
+}
+
+/**
+ * Mobile tab bar. The sidebar links do not survive being squeezed into a
+ * phone header, so small screens get a thumb-reachable bar pinned to the
+ * bottom instead — the standard pattern across the reference apps.
+ */
+export function NavTabs({ items }: { items: NavItem[] }) {
+  const pathname = usePathname();
+  const tabs = items.slice(0, 4);
+
+  return (
+    <nav
+      aria-label="Main"
+      className="sticky bottom-0 z-20 flex border-t border-line bg-raised pb-[env(safe-area-inset-bottom)] md:hidden"
+    >
+      {tabs.map((item) => {
+        const Icon = icons[item.icon];
+        const active =
+          pathname === item.href || pathname.startsWith(`${item.href}/`);
+        return (
+          <Link
+            key={item.href}
+            href={item.href}
+            aria-current={active ? "page" : undefined}
+            className={`flex flex-1 flex-col items-center gap-1 py-2.5 text-[0.6875rem] font-medium transition-colors ${
+              active ? "text-ink-accent" : "text-subtle hover:text-ink"
+            }`}
+          >
+            <Icon className="size-5" aria-hidden />
             {item.label}
           </Link>
         );

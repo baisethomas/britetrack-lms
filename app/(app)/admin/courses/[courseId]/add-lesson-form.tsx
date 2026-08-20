@@ -53,12 +53,12 @@ export function AddLessonForm({ courseId }: { courseId: string }) {
           <Textarea id="content" name="content" rows={5} />
         </div>
         {state.error && (
-          <p role="alert" className="text-sm text-rose-600">
+          <p role="alert" className="text-sm text-danger">
             {state.error}
           </p>
         )}
         {state.success && (
-          <p role="status" className="text-sm text-emerald-600">
+          <p role="status" className="text-sm text-success">
             {state.success}
           </p>
         )}

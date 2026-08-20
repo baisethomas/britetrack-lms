@@ -27,7 +27,7 @@ export function LinkParentForm({
   return (
     <Card>
       <h2 className="font-semibold">Link a parent to a student</h2>
-      <p className="mt-1 text-sm text-slate-500">
+      <p className="mt-1 text-sm text-muted">
         Linked parents can see that student&apos;s course progress and streaks.
       </p>
       <form action={action} className="mt-4 flex flex-wrap items-end gap-4">
@@ -61,12 +61,12 @@ export function LinkParentForm({
           {pending ? "Linking…" : "Link"}
         </Button>
         {state.error && (
-          <p role="alert" className="w-full text-sm text-rose-600">
+          <p role="alert" className="w-full text-sm text-danger">
             {state.error}
           </p>
         )}
         {state.success && (
-          <p role="status" className="w-full text-sm text-emerald-600">
+          <p role="status" className="w-full text-sm text-success">
             {state.success}
           </p>
         )}

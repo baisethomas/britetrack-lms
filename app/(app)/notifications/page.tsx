@@ -27,8 +27,8 @@ export default async function NotificationsPage() {
     <div className="space-y-6">
       <div className="flex items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Notifications</h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <h1 className="text-display font-bold">Notifications</h1>
+          <p className="mt-1 text-sm text-muted">
             Enrollment updates, live sessions, and milestones.
           </p>
         </div>
@@ -48,7 +48,7 @@ export default async function NotificationsPage() {
           description="You'll see updates about your courses and live sessions as they happen."
         />
       ) : (
-        <Card className="divide-y divide-slate-100 p-0">
+        <Card className="divide-y divide-line p-0">
           {notifications.map((n) => (
             <div
               key={n.id}
@@ -58,19 +58,19 @@ export default async function NotificationsPage() {
             >
               <span
                 className={`mt-1.5 size-2 shrink-0 rounded-full ${
-                  n.read_at ? "bg-slate-200" : "bg-brand-600"
+                  n.read_at ? "bg-track" : "bg-accent"
                 }`}
                 aria-hidden
               />
               <div className="min-w-0 flex-1">
                 <div className="text-sm font-medium">{n.title}</div>
-                {n.body && <p className="mt-0.5 text-sm text-slate-500">{n.body}</p>}
-                <div className="mt-1 flex items-center gap-3 text-xs text-slate-400">
+                {n.body && <p className="mt-0.5 text-sm text-muted">{n.body}</p>}
+                <div className="mt-1 flex items-center gap-3 text-xs text-subtle">
                   <time dateTime={n.created_at}>
                     {new Date(n.created_at).toLocaleString()}
                   </time>
                   {n.href && (
-                    <Link href={n.href} className="text-brand-600 hover:underline">
+                    <Link href={n.href} className="text-accent hover:underline">
                       View
                     </Link>
                   )}
@@ -80,7 +80,7 @@ export default async function NotificationsPage() {
                 <form action={markNotificationRead.bind(null, n.id)}>
                   <button
                     type="submit"
-                    className="text-xs text-slate-400 hover:text-slate-600"
+                    className="text-xs text-subtle hover:text-muted"
                   >
                     Mark read
                   </button>

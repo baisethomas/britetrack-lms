@@ -29,8 +29,8 @@ export function SignupForm() {
 
   return (
     <Card>
-      <h1 className="text-xl font-semibold">Create your account</h1>
-      <p className="mt-1 text-sm text-slate-500">
+      <h1 className="text-title font-semibold">Create your account</h1>
+      <p className="mt-1 text-sm text-muted">
         Start with the role that fits you — admins are invited separately.
       </p>
       <form action={action} className="mt-6 space-y-4">
@@ -43,15 +43,15 @@ export function SignupForm() {
               role="radio"
               aria-checked={role === r.value}
               onClick={() => setRole(r.value)}
-              className={`rounded-xl border p-3 text-left transition-colors ${
+              className={`rounded-card border p-3 text-left transition-colors ${
                 role === r.value
-                  ? "border-brand-600 bg-brand-50 ring-1 ring-brand-600"
-                  : "border-slate-200 hover:border-slate-300"
+                  ? "border-accent bg-accent-soft ring-1 ring-accent"
+                  : "border-line hover:border-line"
               }`}
             >
-              <r.icon className="mb-2 size-5 text-brand-600" aria-hidden />
+              <r.icon className="mb-2 size-5 text-accent" aria-hidden />
               <div className="text-sm font-medium">{r.label}</div>
-              <div className="mt-0.5 text-xs text-slate-500">{r.description}</div>
+              <div className="mt-0.5 text-xs text-muted">{r.description}</div>
             </button>
           ))}
         </div>
@@ -73,10 +73,10 @@ export function SignupForm() {
             minLength={8}
             required
           />
-          <p className="mt-1 text-xs text-slate-500">At least 8 characters.</p>
+          <p className="mt-1 text-xs text-muted">At least 8 characters.</p>
         </div>
         {state.error && (
-          <p role="alert" className="text-sm text-rose-600">
+          <p role="alert" className="text-sm text-danger">
             {state.error}
           </p>
         )}
@@ -84,9 +84,9 @@ export function SignupForm() {
           {pending ? "Creating account…" : "Create account"}
         </Button>
       </form>
-      <p className="mt-4 text-center text-sm text-slate-500">
+      <p className="mt-4 text-center text-sm text-muted">
         Already have an account?{" "}
-        <Link href="/login" className="font-medium text-brand-600 hover:underline">
+        <Link href="/login" className="font-medium text-accent hover:underline">
           Sign in
         </Link>
       </p>

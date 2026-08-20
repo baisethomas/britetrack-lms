@@ -1,19 +1,194 @@
 @import "tailwindcss";
 
-@theme {
-  --color-brand-50: #eef4ff;
-  --color-brand-100: #dbe6fe;
-  --color-brand-200: #bfd3fe;
-  --color-brand-300: #93b4fd;
-  --color-brand-400: #6090fa;
-  --color-brand-500: #3b6df6;
-  --color-brand-600: #2450eb;
-  --color-brand-700: #1c3dd8;
-  --color-brand-800: #1d34af;
-  --color-brand-900: #1d318a;
-  --color-brand-950: #172054;
+/* Dark mode follows the OS by default; [data-theme] overrides it either way,
+   so a toggle can be added later without touching component code. */
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+:root {
+  /* Brand ramp */
+  --brand-50: #eef4ff;
+  --brand-100: #dbe6fe;
+  --brand-200: #bfd3fe;
+  --brand-300: #93b4fd;
+  --brand-400: #6090fa;
+  --brand-500: #3b6df6;
+  --brand-600: #2450eb;
+  --brand-700: #1c3dd8;
+  --brand-800: #1d34af;
+  --brand-900: #1d318a;
+
+  /* Semantic surfaces — components reference these, never raw slate values,
+     so dark mode is a matter of reassigning them below. */
+  --surface: #f6f7f9;
+  --surface-raised: #ffffff;
+  --surface-sunken: #eef0f4;
+  --surface-hover: #f1f3f7;
+  --surface-accent: var(--brand-50);
+
+  --border: #e2e6ee;
+  --border-strong: #cbd2e0;
+
+  --text: #0f172a;
+  --text-muted: #5a6478;
+  --text-subtle: #8b94a7;
+  --text-inverse: #ffffff;
+  --text-accent: var(--brand-700);
+
+  --accent: var(--brand-600);
+  --accent-hover: var(--brand-700);
+  --accent-soft: var(--brand-50);
+  --accent-ring: rgb(36 80 235 / 0.35);
+
+  --success: #059669;
+  --success-soft: #d1fae5;
+  --warning: #b45309;
+  --warning-soft: #fef3c7;
+  --danger: #e11d48;
+  --danger-soft: #ffe4e6;
+
+  /* Streaks read as warm/energetic across Uxcel, Codecademy and Brilliant. */
+  --streak: #ea580c;
+  --streak-soft: #ffedd5;
+
+  --track: #e6e9f0;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --surface: #0b0f19;
+    --surface-raised: #141a26;
+    --surface-sunken: #090d15;
+    --surface-hover: #1b2231;
+    --surface-accent: #16203a;
+
+    --border: #232c3d;
+    --border-strong: #33405a;
+
+    --text: #f1f4f9;
+    --text-muted: #9aa5ba;
+    --text-subtle: #6b7689;
+    --text-accent: #93b4fd;
+
+    --accent: var(--brand-500);
+    --accent-hover: var(--brand-400);
+    --accent-soft: #16203a;
+    --accent-ring: rgb(59 109 246 / 0.45);
+
+    --success: #34d399;
+    --success-soft: #06331f;
+    --warning: #fbbf24;
+    --warning-soft: #3a2a06;
+    --danger: #fb7185;
+    --danger-soft: #3d0d1a;
+
+    --streak: #fb923c;
+    --streak-soft: #3a1f0a;
+
+    --track: #232c3d;
+  }
+}
+
+[data-theme="dark"] {
+  --surface: #0b0f19;
+  --surface-raised: #141a26;
+  --surface-sunken: #090d15;
+  --surface-hover: #1b2231;
+  --surface-accent: #16203a;
+
+  --border: #232c3d;
+  --border-strong: #33405a;
+
+  --text: #f1f4f9;
+  --text-muted: #9aa5ba;
+  --text-subtle: #6b7689;
+  --text-accent: #93b4fd;
+
+  --accent: var(--brand-500);
+  --accent-hover: var(--brand-400);
+  --accent-soft: #16203a;
+  --accent-ring: rgb(59 109 246 / 0.45);
+
+  --success: #34d399;
+  --success-soft: #06331f;
+  --warning: #fbbf24;
+  --warning-soft: #3a2a06;
+  --danger: #fb7185;
+  --danger-soft: #3d0d1a;
+
+  --streak: #fb923c;
+  --streak-soft: #3a1f0a;
+
+  --track: #232c3d;
+}
+
+/* `inline` keeps the generated utilities pointing at the variables above,
+   so they re-resolve when the theme changes instead of baking in a value. */
+@theme inline {
+  --color-brand-50: var(--brand-50);
+  --color-brand-100: var(--brand-100);
+  --color-brand-200: var(--brand-200);
+  --color-brand-300: var(--brand-300);
+  --color-brand-400: var(--brand-400);
+  --color-brand-500: var(--brand-500);
+  --color-brand-600: var(--brand-600);
+  --color-brand-700: var(--brand-700);
+  --color-brand-800: var(--brand-800);
+  --color-brand-900: var(--brand-900);
+
+  --color-surface: var(--surface);
+  --color-raised: var(--surface-raised);
+  --color-sunken: var(--surface-sunken);
+  --color-hover: var(--surface-hover);
+  --color-accent-soft: var(--accent-soft);
+
+  --color-line: var(--border);
+  --color-line-strong: var(--border-strong);
+
+  --color-ink: var(--text);
+  --color-muted: var(--text-muted);
+  --color-subtle: var(--text-subtle);
+  --color-inverse: var(--text-inverse);
+  --color-ink-accent: var(--text-accent);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+
+  --color-success: var(--success);
+  --color-success-soft: var(--success-soft);
+  --color-warning: var(--warning);
+  --color-warning-soft: var(--warning-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  --color-streak: var(--streak);
+  --color-streak-soft: var(--streak-soft);
+
+  --color-track: var(--track);
+
+  /* Type scale. Reference dashboards (Babbel, Coursera) open with a large
+     greeting, so `display` exists above the usual heading sizes. */
+  --text-display: 2rem;
+  --text-display--line-height: 2.375rem;
+  --text-display--letter-spacing: -0.02em;
+  --text-title: 1.5rem;
+  --text-title--line-height: 1.875rem;
+  --text-title--letter-spacing: -0.015em;
+  --text-heading: 1.125rem;
+  --text-heading--line-height: 1.5rem;
+  --text-heading--letter-spacing: -0.01em;
+  --text-eyebrow: 0.6875rem;
+  --text-eyebrow--line-height: 1rem;
+  --text-eyebrow--letter-spacing: 0.08em;
+
+  --radius-card: 1rem;
+  --radius-control: 0.625rem;
+
+  --shadow-card: 0 1px 2px rgb(15 23 42 / 0.04), 0 1px 3px rgb(15 23 42 / 0.06);
+  --shadow-raised: 0 4px 12px rgb(15 23 42 / 0.08), 0 1px 3px rgb(15 23 42 / 0.05);
 }
 
 body {
-  @apply bg-slate-50 text-slate-900 antialiased;
+  background-color: var(--surface);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
 }

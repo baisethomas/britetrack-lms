@@ -15,7 +15,7 @@ export default async function LandingPage() {
     <main className="mx-auto flex min-h-dvh max-w-5xl flex-col px-6">
       <header className="flex items-center justify-between py-6">
         <div className="flex items-center gap-2 text-lg font-bold">
-          <GraduationCap className="size-6 text-brand-600" aria-hidden />
+          <GraduationCap className="size-6 text-accent" aria-hidden />
           BriteTrack
         </div>
         <nav className="flex items-center gap-3">
@@ -30,7 +30,7 @@ export default async function LandingPage() {
         <h1 className="max-w-2xl text-4xl font-bold tracking-tight sm:text-5xl">
           Learning that keeps its momentum
         </h1>
-        <p className="max-w-xl text-lg text-slate-600">
+        <p className="max-w-xl text-lg text-muted">
           Structured courses, progressive lesson unlocking, live sessions, and
           progress every learner — and every parent — can actually see.
         </p>
@@ -41,30 +41,30 @@ export default async function LandingPage() {
 
       <section className="grid gap-4 pb-16 sm:grid-cols-3">
         <Card>
-          <GraduationCap className="mb-3 size-6 text-brand-600" aria-hidden />
+          <GraduationCap className="mb-3 size-6 text-accent" aria-hidden />
           <h2 className="font-semibold">Guided paths</h2>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="mt-1 text-sm text-muted">
             Lessons unlock in sequence so learners always know the next step.
           </p>
         </Card>
         <Card>
-          <LineChart className="mb-3 size-6 text-brand-600" aria-hidden />
+          <LineChart className="mb-3 size-6 text-accent" aria-hidden />
           <h2 className="font-semibold">Visible progress</h2>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="mt-1 text-sm text-muted">
             Streaks, completion rings, and course-level progress at a glance.
           </p>
         </Card>
         <Card>
-          <Users className="mb-3 size-6 text-brand-600" aria-hidden />
+          <Users className="mb-3 size-6 text-accent" aria-hidden />
           <h2 className="font-semibold">Built for families</h2>
-          <p className="mt-1 text-sm text-slate-600">
+          <p className="mt-1 text-sm text-muted">
             Parents follow along with linked accounts — no shared passwords.
           </p>
         </Card>
       </section>
 
-      <footer className="border-t border-slate-200 py-6 text-center text-sm text-slate-500">
-        <Link href="/login" className="hover:text-slate-700">
+      <footer className="border-t border-line py-6 text-center text-sm text-muted">
+        <Link href="/login" className="hover:text-ink">
           BriteTrack LMS
         </Link>
       </footer>

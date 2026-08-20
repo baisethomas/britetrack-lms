@@ -12,8 +12,8 @@ export function LoginForm({ next }: { next?: string }) {
 
   return (
     <Card>
-      <h1 className="text-xl font-semibold">Welcome back</h1>
-      <p className="mt-1 text-sm text-slate-500">
+      <h1 className="text-title font-semibold">Welcome back</h1>
+      <p className="mt-1 text-sm text-muted">
         Sign in to pick up where you left off.
       </p>
       <form action={action} className="mt-6 space-y-4">
@@ -39,7 +39,7 @@ export function LoginForm({ next }: { next?: string }) {
           />
         </div>
         {state.error && (
-          <p role="alert" className="text-sm text-rose-600">
+          <p role="alert" className="text-sm text-danger">
             {state.error}
           </p>
         )}
@@ -47,9 +47,9 @@ export function LoginForm({ next }: { next?: string }) {
           {pending ? "Signing in…" : "Sign in"}
         </Button>
       </form>
-      <p className="mt-4 text-center text-sm text-slate-500">
+      <p className="mt-4 text-center text-sm text-muted">
         New here?{" "}
-        <Link href="/signup" className="font-medium text-brand-600 hover:underline">
+        <Link href="/signup" className="font-medium text-accent hover:underline">
           Create an account
         </Link>
       </p>

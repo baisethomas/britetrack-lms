@@ -30,8 +30,8 @@ export async function AdminDashboard() {
     <div className="space-y-6">
       <div className="flex flex-wrap items-end justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Admin overview</h1>
-          <p className="mt-1 text-sm text-slate-500">
+          <h1 className="text-display font-bold">Admin overview</h1>
+          <p className="mt-1 text-sm text-muted">
             Activity across BriteTrack at a glance.
           </p>
         </div>
@@ -46,16 +46,16 @@ export async function AdminDashboard() {
       <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
         {stats.map((s) => (
           <Card key={s.label} className="p-5">
-            <s.icon className="size-5 text-brand-600" aria-hidden />
+            <s.icon className="size-5 text-accent" aria-hidden />
             <div className="mt-3 text-3xl font-bold tabular-nums">{s.value}</div>
-            <div className="mt-1 text-sm text-slate-500">{s.label}</div>
+            <div className="mt-1 text-sm text-muted">{s.label}</div>
           </Card>
         ))}
       </div>
 
       <Card>
         <h2 className="font-semibold">Completion rate</h2>
-        <p className="mt-1 text-sm text-slate-500">
+        <p className="mt-1 text-sm text-muted">
           {totalEnrollments
             ? `${Math.round((totalCompletions / totalEnrollments) * 100)}% of enrollments have finished their course.`
             : "No enrollments yet — publish a course and enroll students to see completion data."}

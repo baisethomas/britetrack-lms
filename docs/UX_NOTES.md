@@ -1,54 +1,105 @@
 # UX notes — patterns behind the UI
 
-The UI follows current LMS/education-app conventions, researched from
-published LMS design guidance (the Mobbin MCP connector was not available in
-the build environment, so patterns were sourced from the references below and
-from well-known products they analyze — Duolingo, Coursera, Udemy).
+The interface is modelled on how shipping education products actually solve
+these screens. References were pulled from [Mobbin](https://mobbin.com) and are
+cited inline so each decision can be traced back to the screens it came from.
 
-## Patterns applied
+## Design tokens
 
-**Continue-learning card (dashboard hero).** The single most useful action —
-resume the current course at the next incomplete lesson — is the largest
-element on the student dashboard, with a progress ring for context. Falls back
-to an empty state that points at the catalog ("Start your first course")
-rather than a blank screen.
+`app/globals.css` defines semantic tokens (`--surface`, `--text-muted`,
+`--accent`, `--streak`, …) rather than letting components reach for raw palette
+values. Components use `bg-raised`, `text-muted`, `border-line` and friends, so
+theming is a matter of reassigning variables — which is what makes the dark
+theme a single block of overrides instead of a per-component sweep.
 
-**Visible progress everywhere.** Progress rings on dashboards, linear bars on
-course cards and curriculum headers, checkmarks per lesson. Progress
-indicators are among the most effective engagement mechanics: simple,
-universally understood, and motivating.
+Dark mode follows the OS by default and can be forced either way with
+`data-theme="light" | "dark"` on the root element, so a user-facing toggle can
+be added later without touching component code.
 
-**Streaks.** A Duolingo-style consecutive-day streak, shown on the student
-dashboard and mirrored to parents. Kept lightweight (no freezes/leagues) —
-appropriate for a program LMS rather than a consumer game.
+## Dashboard
 
-**Sequential unlocking with clear affordances.** Locked lessons stay visible
-in the curriculum (lock icon, muted text) so learners see the full path; the
-next actionable lesson is always unambiguous. The unlock rule is stated in one
-line under the curriculum.
+References: [Uxcel](https://mobbin.com/screens/519c99ca-f49e-4509-b6db-57a74154d859),
+[Coursera](https://mobbin.com/screens/18683325-d982-4756-b06e-4ed52c933b06),
+[Codecademy](https://mobbin.com/screens/1c9ca0fe-bb9a-4753-b41d-c4ef4f3a375c),
+[Babbel](https://mobbin.com/screens/a422a982-e18c-4b0a-9827-3edf3ddad400),
+[Unity](https://mobbin.com/screens/90e21642-8418-4035-a9d7-336a1fff4eb3).
 
-**Focused course player.** Lesson content is the widest column; a slim
-curriculum rail on the right handles orientation and navigation; "Mark
-complete & continue" is the primary action, advancing momentum with one tap.
+- **Named greeting as the page title.** Babbel ("Great to see you, Alex Smith")
+  and Coursera both open this way, at display size.
+- **A continue-learning card as the single dominant element**, carrying a course
+  tile, an eyebrow label, the course title, *the next lesson's name*, and the
+  primary action. Uxcel and Coursera both surface the specific next lesson
+  rather than only the course.
+- **Time remaining next to percent complete.** Uxcel shows "6% · 7h left".
+  Percent alone says how far you've come; time left answers the more useful
+  question of whether you can finish now, so the card shows both.
+- **The streak is a week strip, not a number.** Uxcel, Coursera, Codecademy and
+  Brilliant all render seven day-chips with completed days filled in. A count
+  cannot show *which* day was missed; the strip can, and today is ringed even
+  when it is not yet complete.
 
-**Three-step role-aware onboarding.** Signup asks one question (student or
-parent) with card-style radio buttons, then a single welcome screen explains
-the three things that matter for that role. No multi-screen tour.
+## Course detail
 
-**Empty states that prompt action.** Every list (catalog, notifications,
-children, admin courses) has an icon + one-line explanation + next step,
-following the "empty states become prompts" onboarding guidance.
+References: [Magnific](https://mobbin.com/screens/ba0ea65e-e838-45b1-a9e7-c513f4b02e63),
+[Uxcel](https://mobbin.com/screens/02294a41-5e3c-4db8-9234-14e08e8b3dff),
+[Podia](https://mobbin.com/screens/eadf9ce5-5d7c-4730-b06f-1078e461460e),
+[Codecademy](https://mobbin.com/screens/aa6ef33d-ae53-4d25-a06a-5f53d3ccd9bb),
+[Coursera](https://mobbin.com/screens/91b6f53c-c746-4cdf-a262-aa7929f30ae8).
 
-**Role-scoped navigation.** One shell, but students, parents, and admins each
-see only their five-or-fewer destinations. Mobile gets the same nav in a
-collapsed header rather than a separate app.
+- **The CTA and course facts live in a right rail** beside the syllabus, as on
+  Magnific ("Start Learning" + 24 episodes / 1h 49min / Beginner) and Uxcel,
+  rather than stacked above it.
+- **Every lesson row carries its duration**, right-aligned — universal across
+  the references, and the thing that makes a syllabus scannable.
+- **The next actionable lesson is marked** with an "Up next" / "Start here"
+  badge, following the "Start" pill Uxcel places on the current lesson.
+- **Locked lessons stay visible** with a padlock, as Podia does, so the whole
+  path is legible before it is unlocked.
 
-## References
+## Lesson player
 
-- AnyforSoft — [How to design an LMS: best practices](https://anyforsoft.com/blog/lms-design/)
-- Lazarev.agency — [LMS UX: designing learning platforms people want to use](https://www.lazarev.agency/articles/lms-ux)
-- Appcues — [Onboarding UX patterns and examples](https://www.appcues.com/blog/user-onboarding-ui-ux-patterns)
-- Riseapps — [LMS UI/UX design tips](https://riseapps.co/lms-ui-ux-design/)
-- ProProfs — [LMS gamification](https://www.proprofstraining.com/blog/lms-gamification/)
-- eLeaP — [Gamification in modern LMS platforms](https://www.eleapsoftware.com/glossary/gamification-in-lms-how-modern-learning-management-systems-drive-engagement-retention-and-performance-in-2026/)
-- Research.com — [LMS trends](https://research.com/education/lms-trends)
+References: [Coursera](https://mobbin.com/screens/24efcb48-835b-4dc8-acc4-a502cff8078a),
+[Podia](https://mobbin.com/screens/8a156189-20c0-4b77-afa5-6dcb303fb99b),
+[Squarespace](https://mobbin.com/screens/7662c6fb-b4b6-4b17-9e11-1bf889c9066b),
+[Magnific](https://mobbin.com/screens/dc3ba845-27ec-4218-a999-90b79c841999),
+[Skillshare](https://mobbin.com/screens/296cbc25-e43d-4a14-959d-ef91e20a46a5),
+[MasterClass](https://mobbin.com/screens/53d71db7-abdf-4566-afa9-759d35cd7a8f).
+
+- **The curriculum rail sits on the left.** Coursera, Podia, Squarespace and
+  Magnific all place it there; the rail moved from right to left to match.
+- **The rail header states where you are** — course title plus "N of M
+  completed" and a progress bar, as Podia does with "1/5 completed".
+- **Rail rows show state and duration**: check / play / circle / padlock, then
+  the lesson length, as in Skillshare's "1. Introduction 1:50".
+- **A breadcrumb replaces the back link** (Coursera, Squarespace), so the
+  course and lesson are both addressable from the player.
+- **"Mark complete & continue" advances in one action**, matching Squarespace's
+  "Complete & Continue"; previous/next controls sit below the content as in
+  Magnific.
+
+## Onboarding and auth
+
+References: [Babbel](https://mobbin.com/flows/332ff84d-d0f2-4669-bed6-7f1992729eb4),
+[Codecademy](https://mobbin.com/flows/9e0051c2-a775-4a37-adcd-a9649df80a60),
+[Brilliant](https://mobbin.com/flows/38a82b93-ec50-4c59-9a49-433a979ec59d).
+
+- **Role is chosen first.** Brilliant opens with "I'm a learner" / "I'm a parent
+  or teacher"; signup asks student-or-parent the same way, as two option cards.
+- **A progress bar sits above the flow**, as in Babbel and Codecademy, so the
+  onboarding step reads as finite.
+- **Steps are large tappable cards, one idea each**, rather than a dense bullet
+  list — the shape Babbel and Codecademy use for every onboarding question.
+
+## Navigation
+
+The sidebar collapses to a **bottom tab bar** below `md`, which is the standard
+mobile pattern across the reference apps. It previously reused the desktop
+list in a cramped header row.
+
+## What was deliberately not copied
+
+The references lean heavily on gamification the schema does not support and
+this product does not need: XP totals and levels (Uxcel, Codecademy, Unity),
+leagues and leaderboards (Uxcel), badges (Unity), and certificates (Uxcel,
+Codecademy). Streaks were kept because progress data already implies them;
+the rest would be inventing a scoring model rather than presenting real data.

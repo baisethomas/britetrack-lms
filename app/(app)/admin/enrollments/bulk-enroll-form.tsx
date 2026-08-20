@@ -39,17 +39,17 @@ export function BulkEnrollForm({
             required
             placeholder={"ada@example.com\ngrace@example.com"}
           />
-          <p className="mt-1 text-xs text-slate-500">
+          <p className="mt-1 text-xs text-muted">
             One email per line. CSV rows work too — the first column is used.
           </p>
         </div>
         {state.error && (
-          <p role="alert" className="text-sm text-rose-600">
+          <p role="alert" className="text-sm text-danger">
             {state.error}
           </p>
         )}
         {state.success && (
-          <p role="status" className="text-sm text-emerald-600">
+          <p role="status" className="text-sm text-success">
             {state.success}
           </p>
         )}

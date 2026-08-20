@@ -7,8 +7,8 @@ export default function NewCoursePage() {
   return (
     <div className="mx-auto max-w-xl space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">New course</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="text-display font-bold">New course</h1>
+        <p className="mt-1 text-sm text-muted">
           Courses start as drafts — publish when the curriculum is ready.
         </p>
       </div>
