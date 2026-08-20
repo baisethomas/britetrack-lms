@@ -77,3 +77,46 @@ export function completionPercent(completed: number, total: number): number {
   if (total <= 0) return 0;
   return (completed / total) * 100;
 }
+
+/** Human duration: "45m", "1h", "1h 49m". */
+export function formatDuration(minutes: number): string {
+  const total = Math.max(0, Math.round(minutes));
+  if (total < 60) return `${total}m`;
+  const hours = Math.floor(total / 60);
+  const rest = total % 60;
+  return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
+}
+
+const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"] as const;
+
+export interface StreakDay {
+  label: string;
+  date: string;
+  active: boolean;
+  isToday: boolean;
+}
+
+/**
+ * The trailing seven days, oldest first, flagged with whether a lesson was
+ * completed. Reference dashboards show the week as dots rather than only a
+ * streak count, so a missed day is visible instead of merely implied.
+ */
+export function buildStreakDays(
+  completedAt: readonly string[],
+  now: Date = new Date(),
+): StreakDay[] {
+  const active = new Set(completedAt.map((value) => value.slice(0, 10)));
+  const today = dayKey(now);
+
+  return Array.from({ length: 7 }, (_, index) => {
+    const cursor = new Date(now);
+    cursor.setUTCDate(cursor.getUTCDate() - (6 - index));
+    const date = dayKey(cursor);
+    return {
+      label: WEEKDAY_LABELS[cursor.getUTCDay()],
+      date,
+      active: active.has(date),
+      isToday: date === today,
+    };
+  });
+}

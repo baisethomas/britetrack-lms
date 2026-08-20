@@ -4,7 +4,7 @@ import { GraduationCap, LogOut } from "lucide-react";
 import { getProfile } from "@/lib/data";
 import { signOut } from "@/lib/actions/auth";
 import { createClient } from "@/lib/supabase/server";
-import { NavLinks, navItemsFor } from "@/components/shell/nav";
+import { NavLinks, NavTabs, navItemsFor } from "@/components/shell/nav";
 import { Badge } from "@/components/ui";
 
 export default async function AppLayout({
@@ -30,20 +30,20 @@ export default async function AppLayout({
 
   return (
     <div className="flex min-h-dvh">
-      <aside className="sticky top-0 hidden h-dvh w-60 flex-col border-r border-slate-200 bg-white p-4 md:flex">
+      <aside className="sticky top-0 hidden h-dvh w-60 flex-col border-r border-line bg-raised p-4 md:flex">
         <Link href="/dashboard" className="mb-6 flex items-center gap-2 px-2 font-bold">
-          <GraduationCap className="size-6 text-brand-600" aria-hidden />
+          <GraduationCap className="size-6 text-accent" aria-hidden />
           BriteTrack
         </Link>
         <NavLinks items={items} />
-        <div className="mt-auto border-t border-slate-100 pt-4">
+        <div className="mt-auto border-t border-line pt-4">
           <div className="flex items-center gap-3 px-2">
-            <div className="flex size-9 items-center justify-center rounded-full bg-brand-100 text-sm font-semibold text-brand-700">
+            <div className="flex size-9 items-center justify-center rounded-full bg-accent-soft text-sm font-semibold text-ink-accent">
               {initials}
             </div>
             <div className="min-w-0 flex-1">
-              <div className="truncate text-sm font-medium">{profile.full_name}</div>
-              <Badge tone="slate" className="mt-0.5 capitalize">
+              <div className="truncate text-sm font-medium text-ink">{profile.full_name}</div>
+              <Badge tone="neutral" className="mt-0.5 capitalize">
                 {profile.role}
               </Badge>
             </div>
@@ -51,7 +51,7 @@ export default async function AppLayout({
               <button
                 type="submit"
                 title="Sign out"
-                className="rounded-lg p-2 text-slate-400 hover:bg-slate-100 hover:text-slate-700"
+                className="rounded-control p-2 text-subtle hover:bg-hover hover:text-ink"
               >
                 <LogOut className="size-4" aria-hidden />
                 <span className="sr-only">Sign out</span>
@@ -63,26 +63,23 @@ export default async function AppLayout({
 
       <div className="flex min-w-0 flex-1 flex-col">
         {/* Mobile top bar */}
-        <header className="sticky top-0 z-10 flex items-center justify-between border-b border-slate-200 bg-white px-4 py-3 md:hidden">
+        <header className="sticky top-0 z-10 flex items-center justify-between border-b border-line bg-raised px-4 py-3 md:hidden">
           <Link href="/dashboard" className="flex items-center gap-2 font-bold">
-            <GraduationCap className="size-5 text-brand-600" aria-hidden />
+            <GraduationCap className="size-5 text-accent" aria-hidden />
             BriteTrack
           </Link>
           <form action={signOut}>
-            <button type="submit" className="text-sm text-slate-500">
+            <button type="submit" className="text-sm text-muted">
               Sign out
             </button>
           </form>
         </header>
 
-        {/* Mobile nav below the top bar */}
-        <div className="border-b border-slate-200 bg-white px-2 py-2 md:hidden">
-          <NavLinks items={items} />
-        </div>
-
-        <main className="mx-auto w-full max-w-5xl flex-1 px-4 py-8 sm:px-6">
+        <main className="mx-auto w-full max-w-6xl flex-1 px-4 py-8 sm:px-6">
           {children}
         </main>
+
+        <NavTabs items={items} />
       </div>
       {unread ? <span className="sr-only">{unread} unread notifications</span> : null}
     </div>

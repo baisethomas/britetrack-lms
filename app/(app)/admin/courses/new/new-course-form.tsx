@@ -24,17 +24,17 @@ export function NewCourseForm() {
           <Label htmlFor="category">Category</Label>
           <Input id="category" name="category" placeholder="e.g. Math" />
         </div>
-        <label className="flex items-center gap-2 text-sm text-slate-700">
+        <label className="flex items-center gap-2 text-sm text-ink">
           <input
             type="checkbox"
             name="sequential_unlock"
             defaultChecked
-            className="size-4 rounded border-slate-300 accent-brand-600"
+            className="size-4 rounded border-line accent-accent"
           />
           Unlock lessons sequentially
         </label>
         {state.error && (
-          <p role="alert" className="text-sm text-rose-600">
+          <p role="alert" className="text-sm text-danger">
             {state.error}
           </p>
         )}

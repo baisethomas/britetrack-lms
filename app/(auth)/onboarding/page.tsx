@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import { BookOpen, LineChart, Sparkles, Users } from "lucide-react";
 import { getProfile } from "@/lib/data";
 import { completeOnboarding } from "@/lib/actions/auth";
-import { Button, Card } from "@/components/ui";
+import { Button, Eyebrow } from "@/components/ui";
 
 export const metadata: Metadata = { title: "Welcome" };
 
@@ -42,38 +42,50 @@ export default async function OnboardingPage() {
           {
             icon: Sparkles,
             title: "Keep your streak",
-            body: "Complete a lesson a day to build a streak and watch your progress ring fill up.",
+            body: "Complete a lesson a day to build a streak and fill in your week.",
           },
         ];
 
   return (
-    <Card>
-      <h1 className="text-xl font-semibold">
-        Welcome, {profile.full_name.split(" ")[0] || "there"} 👋
-      </h1>
-      <p className="mt-1 text-sm text-slate-500">
-        Here is how BriteTrack works, in three steps.
-      </p>
-      <ol className="mt-6 space-y-4">
+    <div className="space-y-8">
+      {/* Reference onboardings (Babbel, Codecademy) show where you are with a
+          slim bar at the top; this flow is a single step, so it reads full. */}
+      <div className="h-1 w-full overflow-hidden rounded-full bg-track">
+        <div className="h-full w-full rounded-full bg-accent" />
+      </div>
+
+      <div className="text-center">
+        <Eyebrow>Welcome</Eyebrow>
+        <h1 className="mt-2 text-display font-bold text-ink">
+          Hi {profile.full_name.split(" ")[0] || "there"}, here&apos;s how
+          BriteTrack works
+        </h1>
+      </div>
+
+      <ol className="space-y-3">
         {steps.map((step, i) => (
-          <li key={step.title} className="flex gap-3">
-            <div className="flex size-9 shrink-0 items-center justify-center rounded-full bg-brand-50 text-brand-600">
-              <step.icon className="size-4" aria-hidden />
+          <li
+            key={step.title}
+            className="flex gap-4 rounded-card border border-line bg-raised p-4 shadow-card"
+          >
+            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
+              <step.icon className="size-5" aria-hidden />
             </div>
             <div>
-              <div className="text-sm font-medium">
+              <div className="text-sm font-semibold text-ink">
                 {i + 1}. {step.title}
               </div>
-              <p className="mt-0.5 text-sm text-slate-500">{step.body}</p>
+              <p className="mt-1 text-sm text-muted">{step.body}</p>
             </div>
           </li>
         ))}
       </ol>
-      <form action={completeOnboarding} className="mt-6">
-        <Button type="submit" className="w-full">
+
+      <form action={completeOnboarding}>
+        <Button type="submit" className="w-full py-3">
           Go to my dashboard
         </Button>
       </form>
-    </Card>
+    </div>
   );
 }

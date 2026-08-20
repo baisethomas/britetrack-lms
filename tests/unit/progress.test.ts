@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildStreakDays,
+  formatDuration,
   completionPercent,
   computeStreak,
   deriveLessonState,
@@ -137,5 +139,67 @@ describe("completionPercent", () => {
 
   it("returns zero rather than dividing by zero", () => {
     expect(completionPercent(0, 0)).toBe(0);
+  });
+});
+
+describe("formatDuration", () => {
+  it("shows minutes under an hour", () => {
+    expect(formatDuration(0)).toBe("0m");
+    expect(formatDuration(45)).toBe("45m");
+    expect(formatDuration(59)).toBe("59m");
+  });
+
+  it("shows whole hours without a minute part", () => {
+    expect(formatDuration(60)).toBe("1h");
+    expect(formatDuration(120)).toBe("2h");
+  });
+
+  it("combines hours and minutes", () => {
+    expect(formatDuration(109)).toBe("1h 49m");
+    expect(formatDuration(185)).toBe("3h 5m");
+  });
+
+  it("never renders a negative duration", () => {
+    expect(formatDuration(-30)).toBe("0m");
+  });
+});
+
+describe("buildStreakDays", () => {
+  // 2026-03-15 is a Sunday.
+  const now = new Date("2026-03-15T12:00:00Z");
+
+  it("returns the trailing seven days, oldest first, ending today", () => {
+    const days = buildStreakDays([], now);
+    expect(days).toHaveLength(7);
+    expect(days[0].date).toBe("2026-03-09");
+    expect(days[6].date).toBe("2026-03-15");
+  });
+
+  it("labels each day with its weekday initial", () => {
+    const days = buildStreakDays([], now);
+    expect(days.map((d) => d.label)).toEqual(["M", "T", "W", "T", "F", "S", "S"]);
+  });
+
+  it("flags only the days with a completion", () => {
+    const days = buildStreakDays(
+      ["2026-03-15T08:00:00Z", "2026-03-13T22:00:00Z"],
+      now,
+    );
+    expect(days.filter((d) => d.active).map((d) => d.date)).toEqual([
+      "2026-03-13",
+      "2026-03-15",
+    ]);
+  });
+
+  it("marks exactly one day as today", () => {
+    const days = buildStreakDays([], now);
+    expect(days.filter((d) => d.isToday).map((d) => d.date)).toEqual([
+      "2026-03-15",
+    ]);
+  });
+
+  it("ignores completions outside the window", () => {
+    const days = buildStreakDays(["2026-02-01T08:00:00Z"], now);
+    expect(days.every((d) => !d.active)).toBe(true);
   });
 });

@@ -15,7 +15,11 @@ interface AdminUser {
   created_at: string;
 }
 
-const roleTone = { admin: "brand", student: "green", parent: "amber" } as const;
+const roleTone = {
+  admin: "accent",
+  student: "success",
+  parent: "warning",
+} as const;
 
 export default async function AdminUsersPage() {
   const supabase = await createClient();
@@ -33,14 +37,14 @@ export default async function AdminUsersPage() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-bold">Users</h1>
-        <p className="mt-1 text-sm text-slate-500">
+        <h1 className="text-display font-bold">Users</h1>
+        <p className="mt-1 text-sm text-muted">
           Everyone with a BriteTrack account. Change roles with care.
         </p>
       </div>
 
       {error && (
-        <p role="alert" className="text-sm text-rose-600">
+        <p role="alert" className="text-sm text-danger">
           Could not load users: {error.message}
         </p>
       )}
@@ -63,7 +67,7 @@ export default async function AdminUsersPage() {
                     <span className="font-medium">
                       {parent?.full_name || parent?.email || "Unknown parent"}
                     </span>{" "}
-                    <span className="text-slate-500">is linked to</span>{" "}
+                    <span className="text-muted">is linked to</span>{" "}
                     <span className="font-medium">
                       {student?.full_name || student?.email || "Unknown student"}
                     </span>
@@ -73,7 +77,7 @@ export default async function AdminUsersPage() {
                   >
                     <button
                       type="submit"
-                      className="text-xs text-rose-600 hover:underline"
+                      className="text-xs text-danger hover:underline"
                     >
                       Unlink
                     </button>
@@ -88,7 +92,7 @@ export default async function AdminUsersPage() {
       <Card className="overflow-x-auto p-0">
         <table className="w-full text-left text-sm">
           <thead>
-            <tr className="border-b border-slate-100 text-xs text-slate-500 uppercase">
+            <tr className="border-b border-line text-xs text-muted uppercase">
               <th className="px-5 py-3 font-medium">Name</th>
               <th className="px-5 py-3 font-medium">Email</th>
               <th className="px-5 py-3 font-medium">Role</th>
@@ -98,17 +102,17 @@ export default async function AdminUsersPage() {
               </th>
             </tr>
           </thead>
-          <tbody className="divide-y divide-slate-100">
+          <tbody className="divide-y divide-line">
             {users.map((user) => (
               <tr key={user.id}>
                 <td className="px-5 py-3 font-medium">{user.full_name || "—"}</td>
-                <td className="px-5 py-3 text-slate-600">{user.email}</td>
+                <td className="px-5 py-3 text-muted">{user.email}</td>
                 <td className="px-5 py-3">
                   <Badge tone={roleTone[user.role]} className="capitalize">
                     {user.role}
                   </Badge>
                 </td>
-                <td className="px-5 py-3 text-slate-500">
+                <td className="px-5 py-3 text-muted">
                   {new Date(user.created_at).toLocaleDateString()}
                 </td>
                 <td className="px-5 py-3">
@@ -125,7 +129,7 @@ export default async function AdminUsersPage() {
                     <select
                       name="role"
                       defaultValue={user.role}
-                      className="rounded-lg border border-slate-200 px-2 py-1 text-xs"
+                      className="rounded-control border border-line px-2 py-1 text-xs"
                     >
                       <option value="student">student</option>
                       <option value="parent">parent</option>
@@ -133,7 +137,7 @@ export default async function AdminUsersPage() {
                     </select>
                     <button
                       type="submit"
-                      className="text-xs font-medium text-brand-600 hover:underline"
+                      className="text-xs font-medium text-accent hover:underline"
                     >
                       Update
                     </button>
@@ -143,7 +147,7 @@ export default async function AdminUsersPage() {
             ))}
             {users.length === 0 && !error && (
               <tr>
-                <td colSpan={5} className="px-5 py-8 text-center text-slate-500">
+                <td colSpan={5} className="px-5 py-8 text-center text-muted">
                   No users yet.
                 </td>
               </tr>
