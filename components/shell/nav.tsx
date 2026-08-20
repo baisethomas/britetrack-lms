@@ -85,7 +85,11 @@ export function NavLinks({ items }: { items: NavItem[] }) {
  */
 export function NavTabs({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
-  const tabs = items.slice(0, 4);
+  // Every destination gets a tab: the sidebar is hidden at this breakpoint, so
+  // anything omitted here would be unreachable. Admins have the longest menu at
+  // five, which is also the practical ceiling for a tab bar — a sixth would
+  // need an overflow entry rather than another tab.
+  const tabs = items;
 
   return (
     <nav
@@ -101,12 +105,12 @@ export function NavTabs({ items }: { items: NavItem[] }) {
             key={item.href}
             href={item.href}
             aria-current={active ? "page" : undefined}
-            className={`flex flex-1 flex-col items-center gap-1 py-2.5 text-[0.6875rem] font-medium transition-colors ${
+            className={`flex min-w-0 flex-1 flex-col items-center gap-1 px-1 py-2.5 text-[0.6875rem] font-medium transition-colors ${
               active ? "text-ink-accent" : "text-subtle hover:text-ink"
             }`}
           >
-            <Icon className="size-5" aria-hidden />
-            {item.label}
+            <Icon className="size-5 shrink-0" aria-hidden />
+            <span className="w-full truncate text-center">{item.label}</span>
           </Link>
         );
       })}
