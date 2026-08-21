@@ -26,6 +26,21 @@ Supabase session; writes go through server actions. This removes an entire
 deployment, a second auth story, and all client-side data fetching for core
 pages.
 
+### Table privileges come from Supabase; RLS does the constraining
+
+A Supabase project ships `alter default privileges in schema public grant all
+on tables to anon, authenticated, service_role`, so every table these
+migrations create is already reachable by the API roles, and RLS is what
+decides which rows. That is why no table in the schema carries an explicit
+grant, and why the few `revoke` statements that do exist — on the quiz answer
+key and on `lesson_catalog` for `anon` — are meaningful: they take away
+something the platform already gave.
+
+The assumption is load-bearing for the whole schema, not for quizzes
+specifically. On a plain Postgres without those default privileges nothing in
+the app would be readable, which is what `tests/db/shim/02-supabase-post.sql`
+reproduces before the suite runs.
+
 ### Postgres RLS is the authorization layer
 
 Every table has row-level security; policies encode the role model

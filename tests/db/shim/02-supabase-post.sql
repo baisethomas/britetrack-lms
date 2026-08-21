@@ -1,6 +1,13 @@
 -- Applied AFTER the migration: grant the API roles table access, matching a
 -- real Supabase project. Row-level authorization is still entirely up to RLS.
 --
+-- This is not a convenience that hides missing grants. Supabase sets
+-- `alter default privileges in schema public grant all on tables to anon,
+-- authenticated, service_role`, so tables arrive already reachable and RLS
+-- decides the rows; no table in these migrations carries an explicit grant.
+-- The blanket grant below reproduces that starting point, which is why the
+-- revokes that follow it are the interesting part.
+--
 -- The migration's own `revoke ... from anon` on lesson_catalog runs before
 -- this, so re-apply that restriction afterwards to keep the view
 -- authenticated-only.
