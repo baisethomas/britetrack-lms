@@ -82,6 +82,8 @@ export async function addQuizQuestion(
     }))
     .filter((o) => o.label !== "");
 
+  // These are checked again inside create_quiz_question(); repeating them here
+  // is only so the admin gets a readable message instead of a raised exception.
   if (options.length < 2) return { error: "Add at least two options" };
   const correctCount = options.filter((o) => o.isCorrect).length;
   if (correctCount === 0) return { error: "Mark at least one option correct" };
@@ -89,31 +91,19 @@ export async function addQuizQuestion(
     return { error: "A single-choice question needs exactly one correct option" };
   }
 
+  // One RPC, one transaction: two separate writes could commit the question
+  // and then fail on its options, leaving students an unanswerable question.
   const supabase = await createClient();
-  const { data: last } = await supabase
-    .from("quiz_questions")
-    .select("position")
-    .eq("lesson_id", lessonId)
-    .order("position", { ascending: false })
-    .limit(1)
-    .maybeSingle();
-
-  const { data: question, error } = await supabase
-    .from("quiz_questions")
-    .insert({ ...parsed.data, lesson_id: lessonId, position: (last?.position ?? 0) + 1 })
-    .select("id")
-    .single();
+  const { error } = await supabase.rpc("create_quiz_question", {
+    p_lesson_id: lessonId,
+    p_prompt: parsed.data.prompt,
+    p_explanation: parsed.data.explanation,
+    p_kind: parsed.data.kind,
+    p_points: parsed.data.points,
+    p_labels: options.map((o) => o.label),
+    p_correct: options.map((o) => o.isCorrect),
+  });
   if (error) return { error: error.message };
-
-  const { error: optionError } = await supabase.from("quiz_options").insert(
-    options.map((option, i) => ({
-      question_id: question.id,
-      label: option.label,
-      is_correct: option.isCorrect,
-      position: i + 1,
-    })),
-  );
-  if (optionError) return { error: optionError.message };
 
   revalidatePath(`/admin/lessons/${lessonId}`);
   return { error: null, success: "Question added" };

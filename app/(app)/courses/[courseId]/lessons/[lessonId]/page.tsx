@@ -175,7 +175,6 @@ export default async function LessonPage({
             <QuizResults
               attempt={latestAttempt}
               review={review}
-              questions={questions}
               passMark={lesson.pass_mark}
               retakeHref={`/courses/${courseId}/lessons/${lesson.id}?retake=1`}
               attemptCount={attemptCount}

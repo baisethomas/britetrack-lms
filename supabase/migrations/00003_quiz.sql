@@ -168,7 +168,11 @@ begin
   for v_question in
     select q.id, q.points
     from public.quiz_questions q
-    where q.lesson_id = p_lesson_id and q.archived_at is null
+    where q.lesson_id = p_lesson_id
+      and q.archived_at is null
+      -- A question with no options cannot be answered, so counting it toward
+      -- the total would let a half-authored question block every pass.
+      and exists (select 1 from public.quiz_options o where o.question_id = q.id)
     order by q.position
   loop
     v_max := v_max + v_question.points;
@@ -237,7 +241,12 @@ returns table (
   question_position int,
   is_correct boolean,
   selected_option_ids uuid[],
-  correct_option_ids uuid[]
+  correct_option_ids uuid[],
+  -- Labels travel with the review because a question may since have been
+  -- archived, and the student-facing views deliberately no longer carry it.
+  -- Resolving ids against the live quiz would render a retired answer blank.
+  selected_labels text[],
+  correct_labels text[]
 )
 language plpgsql
 security definer set search_path = public
@@ -269,7 +278,16 @@ begin
   return query
     select q.id, q.prompt, q.explanation, q.points, q.position,
            ans.is_correct, ans.selected_option_ids,
-           public.normalise_option_ids(array_agg(o.id) filter (where o.is_correct))
+           public.normalise_option_ids(array_agg(o.id) filter (where o.is_correct)),
+           coalesce(
+             array_agg(o.label order by o.position)
+               filter (where o.id = any (ans.selected_option_ids)),
+             '{}'::text[]
+           ),
+           coalesce(
+             array_agg(o.label order by o.position) filter (where o.is_correct),
+             '{}'::text[]
+           )
     from public.quiz_answers ans
     join public.quiz_questions q on q.id = ans.question_id
     left join public.quiz_options o on o.question_id = q.id
@@ -351,6 +369,85 @@ create or replace view public.lesson_catalog as
 
 revoke all on public.lesson_catalog from anon;
 grant select on public.lesson_catalog to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Authoring a question and its options in one transaction
+-- ---------------------------------------------------------------------------
+/**
+ * Create a question with its options atomically.
+ *
+ * Two separate writes from the app could commit the question and then fail on
+ * the options, leaving a live question with nothing to choose — which students
+ * would be shown, and could not answer. A function body is one transaction, so
+ * either the whole question exists or none of it does.
+ *
+ * Validation lives here rather than only in the form so that the rules hold for
+ * any caller: at least two options, at least one correct, and exactly one
+ * correct for a single-choice question.
+ */
+create or replace function public.create_quiz_question(
+  p_lesson_id uuid,
+  p_prompt text,
+  p_explanation text,
+  p_kind public.quiz_question_kind,
+  p_points int,
+  p_labels text[],
+  p_correct boolean[]
+)
+returns uuid
+language plpgsql
+security definer set search_path = public
+as $$
+declare
+  v_question uuid;
+  v_correct_count int;
+  i int;
+begin
+  if public.current_user_role() is distinct from 'admin' then
+    raise exception 'forbidden';
+  end if;
+  if not exists (select 1 from public.lessons where id = p_lesson_id) then
+    raise exception 'lesson not found';
+  end if;
+  if coalesce(array_length(p_labels, 1), 0) <> coalesce(array_length(p_correct, 1), 0) then
+    raise exception 'labels and correctness flags must line up';
+  end if;
+  if coalesce(array_length(p_labels, 1), 0) < 2 then
+    raise exception 'a question needs at least two options';
+  end if;
+
+  select count(*) into v_correct_count
+  from unnest(p_correct) c where c;
+  if v_correct_count = 0 then
+    raise exception 'a question needs at least one correct option';
+  end if;
+  if p_kind = 'single_choice' and v_correct_count > 1 then
+    raise exception 'a single-choice question needs exactly one correct option';
+  end if;
+
+  insert into public.quiz_questions
+    (lesson_id, prompt, explanation, kind, points, position)
+  values (
+    p_lesson_id,
+    p_prompt,
+    coalesce(p_explanation, ''),
+    p_kind,
+    greatest(coalesce(p_points, 1), 1),
+    coalesce(
+      (select max(position) from public.quiz_questions where lesson_id = p_lesson_id),
+      0
+    ) + 1
+  )
+  returning id into v_question;
+
+  for i in 1 .. array_length(p_labels, 1) loop
+    insert into public.quiz_options (question_id, label, is_correct, position)
+    values (v_question, p_labels[i], p_correct[i], i);
+  end loop;
+
+  return v_question;
+end;
+$$;
 
 -- ---------------------------------------------------------------------------
 -- Quiz lessons are completed by grading, not by asking

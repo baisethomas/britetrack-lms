@@ -173,6 +173,118 @@ describe("answer key confidentiality", () => {
   });
 });
 
+describe("authoring a question", () => {
+  it("creates the question and its options in one transaction", async () => {
+    await withRollback(async (db) => {
+      const admin = await db.createUser({ email: "a@example.com" });
+      await db.setRole(admin, "admin");
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 0 });
+
+      const [created] = await db.asUser(admin, (q) =>
+        q.run<{ create_quiz_question: string }>(
+          `select public.create_quiz_question(
+             $1, 'Which one?', 'Because.', 'single_choice', 2,
+             array['A', 'B'], array[false, true]
+           )`,
+          [quiz.lessonId],
+        ),
+      );
+
+      const options = await db.seed<{ label: string; is_correct: boolean }>(
+        "select label, is_correct from public.quiz_options where question_id = $1 order by position",
+        [created.create_quiz_question],
+      );
+      expect(options).toEqual([
+        { label: "A", is_correct: false },
+        { label: "B", is_correct: true },
+      ]);
+    });
+  });
+
+  it("leaves nothing behind when the options are invalid", async () => {
+    // The reason this is one function: a question committed without its
+    // options would be shown to students with nothing to choose.
+    await withRollback(async (db) => {
+      const admin = await db.createUser({ email: "a@example.com" });
+      await db.setRole(admin, "admin");
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 0 });
+
+      for (const [labels, correct, message] of [
+        ["array['A']", "array[true]", /at least two options/i],
+        ["array['A', 'B']", "array[false, false]", /at least one correct/i],
+        ["array['A', 'B']", "array[true, true]", /single-choice/i],
+      ] as const) {
+        const result = await db.asUser(admin, (q) =>
+          q.attempt(
+            `select public.create_quiz_question(
+               $1, 'Bad', '', 'single_choice', 1, ${labels}, ${correct}
+             )`,
+            [quiz.lessonId],
+          ),
+        );
+        expect(result.ok).toBe(false);
+        expect(result.error).toMatch(message);
+      }
+
+      const left = await db.seed(
+        "select id from public.quiz_questions where lesson_id = $1",
+        [quiz.lessonId],
+      );
+      expect(left).toHaveLength(0);
+    });
+  });
+
+  it("refuses a student", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 0 });
+      await enroll(db, courseId, student);
+
+      const result = await db.asUser(student, (q) =>
+        q.attempt(
+          `select public.create_quiz_question(
+             $1, 'Mine', '', 'single_choice', 1, array['A', 'B'], array[true, false]
+           )`,
+          [quiz.lessonId],
+        ),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/forbidden/i);
+    });
+  });
+
+  it("does not let a question without options block a pass", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 1 });
+      await enroll(db, courseId, student);
+
+      await db.seed(
+        `insert into public.quiz_questions (lesson_id, prompt, position)
+         values ($1, 'Half-authored', 50)`,
+        [quiz.lessonId],
+      );
+
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, answerPayload(quiz.questionIds, quiz.correctIds)],
+        ),
+      );
+
+      const [attempt] = await db.seed<{ max_score: number; passed: boolean }>(
+        "select max_score, passed from public.quiz_attempts where id = $1",
+        [row.submit_quiz_attempt],
+      );
+      expect(attempt).toMatchObject({ max_score: 1, passed: true });
+    });
+  });
+});
+
 describe("quiz completion cannot be forged", () => {
   it("blocks a student from completing a quiz lesson through lesson_progress", async () => {
     // The generic progress path gates on can_access_lesson() alone, so without
@@ -301,6 +413,38 @@ describe("archived questions", () => {
         [row.submit_quiz_attempt],
       );
       expect(attempt).toMatchObject({ max_score: 1, passed: true });
+    });
+  });
+
+  it("still reads out the answer labels of an archived question", async () => {
+    // The review carries labels precisely because the student-facing views no
+    // longer expose an archived question's options — resolving ids against the
+    // live quiz would leave a retired answer rendering blank.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 1 });
+      await enroll(db, courseId, student);
+
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, answerPayload(quiz.questionIds, quiz.correctIds)],
+        ),
+      );
+
+      await db.seed("update public.quiz_questions set archived_at = now() where id = $1", [
+        quiz.questionIds[0],
+      ]);
+
+      const review = await db.asUser(student, (q) =>
+        q.run<{ selected_labels: string[]; correct_labels: string[] }>(
+          "select selected_labels, correct_labels from public.quiz_attempt_review($1)",
+          [row.submit_quiz_attempt],
+        ),
+      );
+      expect(review[0].selected_labels).toEqual(["Option 1"]);
+      expect(review[0].correct_labels).toEqual(["Option 1"]);
     });
   });
 

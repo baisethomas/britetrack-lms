@@ -139,4 +139,7 @@ export interface QuizReviewRow {
   is_correct: boolean;
   selected_option_ids: string[];
   correct_option_ids: string[];
+  /** Labels carried with the review, so an archived question still reads. */
+  selected_labels: string[];
+  correct_labels: string[];
 }

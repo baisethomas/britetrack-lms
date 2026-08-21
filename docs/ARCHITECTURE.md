@@ -105,7 +105,17 @@ make an old result claim it needed a mark it never did. And retiring a question
 sets `archived_at` rather than deleting it: a delete would cascade its
 `quiz_answers` away while the attempt's stored score still counted them.
 Archived questions disappear from the player and from future grading; past
-results keep them.
+results keep them. `quiz_attempt_review()` therefore returns option *labels*
+alongside their ids: the student-facing views no longer carry an archived
+question's options, so a review that resolved ids against the live quiz would
+render a retired answer blank.
+
+Authoring a question is a single `create_quiz_question()` call rather than two
+writes, because a question that committed without its options would be shown to
+students with nothing to choose. Its validation — two options, at least one
+correct, exactly one for single-choice — lives in the function so it binds any
+caller, not only the form. Grading also skips a question that has no options at
+all, so a half-authored one cannot silently make a pass unreachable.
 
 ## Data model
 
