@@ -21,6 +21,11 @@ export function PassMarkForm({
         <div>
           <Label htmlFor="pass_mark">Pass mark (%)</Label>
           <Input
+            // defaultValue only seeds the DOM on mount, so after the action
+            // clamps and rounds, an admin who typed 150 or 85.5 would keep
+            // seeing that rather than what was stored. Keying on the saved
+            // value remounts the input whenever it actually changes.
+            key={passMark}
             id="pass_mark"
             name="pass_mark"
             type="number"

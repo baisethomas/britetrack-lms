@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useState } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { Plus, X } from "lucide-react";
 import { addQuizQuestion, type QuizFormState } from "@/lib/actions/quiz";
 import { Button, Card, Input, Label, Select, Textarea } from "@/components/ui";
@@ -15,11 +15,20 @@ export function AddQuestionForm({ lessonId }: { lessonId: string }) {
   );
   const [optionCount, setOptionCount] = useState(3);
   const [kind, setKind] = useState<"single_choice" | "multi_choice">("single_choice");
+  const formRef = useRef<HTMLFormElement>(null);
+
+  // Keyed on the state object, not on its message: useActionState hands back a
+  // fresh object per submission, whereas the success text is identical every
+  // time — so a key built from it would only ever remount once, leaving the
+  // second and later questions to be cleared by hand.
+  useEffect(() => {
+    if (state.success) formRef.current?.reset();
+  }, [state]);
 
   return (
     <Card>
-      {/* Uncontrolled inputs so a successful submit clears the form on remount. */}
-      <form action={action} className="space-y-4" key={state.success ?? "form"}>
+      {/* Uncontrolled inputs, cleared by the effect above after a success. */}
+      <form action={action} className="space-y-4" ref={formRef}>
         <div>
           <Label htmlFor="prompt">Question</Label>
           <Input id="prompt" name="prompt" required placeholder="What does RLS stand for?" />
