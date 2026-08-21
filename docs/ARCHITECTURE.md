@@ -89,7 +89,14 @@ security, so hiding a column is not something a policy can express. Instead:
   parents, or an admin.
 
 Passing is what completes a quiz lesson — there is no "mark complete" button —
-so a quiz genuinely gates the next lesson under sequential unlock. Retakes are
+so a quiz genuinely gates the next lesson under sequential unlock. That claim
+has to hold in the database or it holds nowhere: the generic `lesson_progress`
+policies gate writes on `can_access_lesson()` alone, so a student who had
+merely *reached* an unlocked quiz could otherwise stamp it complete and walk
+into the next lesson. The student write policies now refuse a completion stamp
+on a quiz lesson outright. Starting one still records progress; only the
+completion is withheld, and `submit_quiz_attempt()` — running as definer —
+remains the one path that can grant it. Retakes are
 unlimited; every attempt is kept.
 
 Two consequences of keeping attempts follow from that. Each attempt stores the

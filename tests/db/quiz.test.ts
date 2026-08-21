@@ -173,6 +173,101 @@ describe("answer key confidentiality", () => {
   });
 });
 
+describe("quiz completion cannot be forged", () => {
+  it("blocks a student from completing a quiz lesson through lesson_progress", async () => {
+    // The generic progress path gates on can_access_lesson() alone, so without
+    // an explicit rule a student who merely reached the quiz could stamp it
+    // complete and skip it entirely.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, student);
+
+      const inserted = await db.asUser(student, (q) =>
+        q.attempt(
+          `insert into public.lesson_progress (lesson_id, student_id, completed_at)
+           values ($1, $2, now()) returning id`,
+          [quiz.lessonId, student],
+        ),
+      );
+      expect(inserted.ok && inserted.rows.length > 0).toBe(false);
+    });
+  });
+
+  it("blocks completing a quiz lesson by updating progress after starting it", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, student);
+
+      // Opening the quiz is allowed and must stay allowed.
+      const started = await db.asUser(student, (q) =>
+        q.run<{ id: string }>(
+          `insert into public.lesson_progress (lesson_id, student_id)
+           values ($1, $2) returning id`,
+          [quiz.lessonId, student],
+        ),
+      );
+      expect(started).toHaveLength(1);
+
+      const completed = await db.asUser(student, (q) =>
+        q.attempt(
+          `update public.lesson_progress set completed_at = now()
+           where lesson_id = $1 and student_id = $2 returning id`,
+          [quiz.lessonId, student],
+        ),
+      );
+      expect(completed.ok && completed.rows.length > 0).toBe(false);
+    });
+  });
+
+  it("still lets a student complete a non-quiz lesson", async () => {
+    // The positive counterpart: the new rule must bite only on quizzes.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId, lessonIds } = await seedCourse(db, { lessonCount: 1 });
+      await enroll(db, courseId, student);
+
+      const done = await db.asUser(student, (q) =>
+        q.run<{ id: string }>(
+          `insert into public.lesson_progress (lesson_id, student_id, completed_at)
+           values ($1, $2, now()) returning id`,
+          [lessonIds[0], student],
+        ),
+      );
+      expect(done).toHaveLength(1);
+    });
+  });
+
+  it("refuses an attempt from a linked parent", async () => {
+    // A parent can read a child's lesson, but can_access_lesson() requires an
+    // enrolment, so grading must refuse them — otherwise a parent could submit
+    // an empty attempt and read the key back out of the review.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const parent = await db.createUser({ email: "p@example.com", role: "parent" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, student);
+      await db.seed(
+        "insert into public.parent_student_links (parent_id, student_id) values ($1, $2)",
+        [parent, student],
+      );
+
+      const result = await db.asUser(parent, (q) =>
+        q.attempt("select public.submit_quiz_attempt($1, $2::jsonb)", [
+          quiz.lessonId,
+          answerPayload(quiz.questionIds, quiz.correctIds),
+        ]),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/forbidden/i);
+    });
+  });
+});
+
 describe("archived questions", () => {
   it("drops an archived question from grading and from the student's view", async () => {
     await withRollback(async (db) => {

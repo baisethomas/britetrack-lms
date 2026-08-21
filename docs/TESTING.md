@@ -126,7 +126,10 @@ expect(result.ok && result.rows.length > 0).toBe(false);
   too, as the positive counterpart — it runs under the same `authenticated`
   role, so a lockdown that catches students must not catch admins. Grading,
   recorded pass marks, archived questions, exact-match multi-choice, foreign
-  option ids, attempt forgery and review access are all covered.
+  option ids, attempt forgery and review access are all covered. Completion is
+  covered from the other side too: a student cannot stamp a quiz lesson
+  complete through the generic `lesson_progress` path, by insert or by update,
+  while a non-quiz lesson still completes normally.
 
 Every negative test has a positive counterpart, so a blanket permission
 failure cannot make the suite pass vacuously.

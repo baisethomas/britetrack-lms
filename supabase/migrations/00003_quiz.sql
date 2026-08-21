@@ -351,3 +351,45 @@ create or replace view public.lesson_catalog as
 
 revoke all on public.lesson_catalog from anon;
 grant select on public.lesson_catalog to authenticated;
+
+-- ---------------------------------------------------------------------------
+-- Quiz lessons are completed by grading, not by asking
+-- ---------------------------------------------------------------------------
+-- "Passing is what completes a quiz lesson" has to hold at the data layer or
+-- it holds nowhere: the generic lesson_progress policies gate writes on
+-- can_access_lesson() alone, so a student who has merely *reached* an unlocked
+-- quiz could stamp completed_at on it directly and skip the quiz — and, under
+-- sequential unlock, walk straight into the next lesson.
+--
+-- Starting a quiz still records progress; only the completion stamp is
+-- withheld. submit_quiz_attempt() is security definer and owned by the schema
+-- owner, so it bypasses these policies and remains the one path that can
+-- complete a quiz lesson.
+create or replace function public.is_quiz_lesson(p_lesson_id uuid)
+returns boolean
+language sql
+stable
+security definer set search_path = public
+as $$
+  select exists (
+    select 1 from public.lessons
+    where id = p_lesson_id and content_type = 'quiz'
+  );
+$$;
+
+drop policy if exists "students write own progress" on public.lesson_progress;
+create policy "students write own progress" on public.lesson_progress
+  for insert with check (
+    student_id = auth.uid()
+    and public.can_access_lesson(lesson_id)
+    and (completed_at is null or not public.is_quiz_lesson(lesson_id))
+  );
+
+drop policy if exists "students update own progress" on public.lesson_progress;
+create policy "students update own progress" on public.lesson_progress
+  for update using (student_id = auth.uid())
+  with check (
+    student_id = auth.uid()
+    and public.can_access_lesson(lesson_id)
+    and (completed_at is null or not public.is_quiz_lesson(lesson_id))
+  );
