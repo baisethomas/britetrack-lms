@@ -206,6 +206,12 @@ export default async function LessonPage({
               <ButtonLink href={`/courses/${courseId}/lessons/${next.id}`}>
                 Next lesson <ArrowRight className="size-4" aria-hidden />
               </ButtonLink>
+            ) : !next ? (
+              // Last lesson in the course: the same way out that a finished
+              // non-quiz lesson offers, rather than a dead end.
+              <ButtonLink href={`/courses/${courseId}`} variant="secondary">
+                Back to course
+              </ButtonLink>
             ) : (
               <span />
             )

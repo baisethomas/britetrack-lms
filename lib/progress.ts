@@ -120,3 +120,14 @@ export function buildStreakDays(
     };
   });
 }
+
+/**
+ * A pass mark the database will accept, or null if the input is not a number
+ * at all. The column is an int constrained to 0..100, so an empty or
+ * non-numeric field has to be rejected rather than clamped — NaN survives
+ * Math.max and Math.min and would reach the check constraint intact.
+ */
+export function normalisePassMark(value: number): number | null {
+  if (!Number.isFinite(value)) return null;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}

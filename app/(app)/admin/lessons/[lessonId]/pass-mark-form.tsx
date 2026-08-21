@@ -14,7 +14,13 @@ export function PassMarkForm({
       <form
         action={async (formData: FormData) => {
           "use server";
-          await setLessonPassMark(lessonId, Number(formData.get("pass_mark")));
+          // An empty field would coerce to 0 — a pass mark everyone clears —
+          // so it is sent as NaN and rejected rather than silently applied.
+          const raw = formData.get("pass_mark");
+          await setLessonPassMark(
+            lessonId,
+            raw === null || String(raw).trim() === "" ? Number.NaN : Number(raw),
+          );
         }}
         className="flex flex-wrap items-end gap-4"
       >

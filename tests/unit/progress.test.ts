@@ -5,6 +5,7 @@ import {
   completionPercent,
   computeStreak,
   deriveLessonState,
+  normalisePassMark,
 } from "@/lib/progress";
 
 const lessons = [
@@ -201,5 +202,29 @@ describe("buildStreakDays", () => {
   it("ignores completions outside the window", () => {
     const days = buildStreakDays(["2026-02-01T08:00:00Z"], now);
     expect(days.every((d) => !d.active)).toBe(true);
+  });
+});
+
+describe("normalisePassMark", () => {
+  it("rejects a value that is not a number", () => {
+    // A non-numeric form field arrives as NaN, and NaN survives Math.max and
+    // Math.min — clamping alone would pass it straight to the database. The
+    // form sends an empty field as NaN too, since "" would otherwise coerce to
+    // 0: a pass mark every student clears.
+    expect(normalisePassMark(Number.NaN)).toBeNull();
+    expect(normalisePassMark(Number("abc"))).toBeNull();
+    expect(normalisePassMark(Number.POSITIVE_INFINITY)).toBeNull();
+  });
+
+  it("clamps to the range the column accepts", () => {
+    expect(normalisePassMark(150)).toBe(100);
+    expect(normalisePassMark(-10)).toBe(0);
+    expect(normalisePassMark(0)).toBe(0);
+    expect(normalisePassMark(100)).toBe(100);
+  });
+
+  it("rounds to an integer", () => {
+    expect(normalisePassMark(85.5)).toBe(86);
+    expect(normalisePassMark(70.2)).toBe(70);
   });
 });

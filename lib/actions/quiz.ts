@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { getProfile } from "@/lib/data";
+import { normalisePassMark } from "@/lib/progress";
 
 const answersSchema = z.array(
   z.object({
@@ -143,16 +144,15 @@ export async function setLessonPassMark(
   const profile = await getProfile();
   if (profile.role !== "admin") redirect("/dashboard");
 
-  // An empty or non-numeric field arrives as NaN, which survives clamping and
-  // would reach the pass_mark check constraint as a failed update.
-  if (!Number.isFinite(passMark)) {
+  const normalised = normalisePassMark(passMark);
+  if (normalised === null) {
     throw new Error("Enter a pass mark between 0 and 100");
   }
 
   const supabase = await createClient();
   await supabase
     .from("lessons")
-    .update({ pass_mark: Math.max(0, Math.min(100, Math.round(passMark))) })
+    .update({ pass_mark: normalised })
     .eq("id", lessonId);
   revalidatePath(`/admin/lessons/${lessonId}`);
 }
