@@ -21,16 +21,19 @@ export async function submitQuizAttempt(
   lessonId: string,
   courseId: string,
   rawAnswers: unknown,
-): Promise<void> {
+): Promise<{ error: string } | void> {
+  // Returned rather than thrown: a throw inside the player's transition stops
+  // the spinner with nothing shown, leaving the student unable to tell whether
+  // their answers were graded.
   const parsed = answersSchema.safeParse(rawAnswers);
-  if (!parsed.success) throw new Error("Malformed answers");
+  if (!parsed.success) return { error: "Those answers could not be read." };
 
   const supabase = await createClient();
   const { error } = await supabase.rpc("submit_quiz_attempt", {
     p_lesson_id: lessonId,
     p_answers: parsed.data,
   });
-  if (error) throw new Error(error.message);
+  if (error) return { error: error.message };
 
   revalidatePath(`/courses/${courseId}/lessons/${lessonId}`);
   revalidatePath(`/courses/${courseId}`);
@@ -126,7 +129,10 @@ export async function deleteQuizQuestion(
   await supabase
     .from("quiz_questions")
     .update({ archived_at: new Date().toISOString() })
-    .eq("id", questionId);
+    .eq("id", questionId)
+    // Scoped to the lesson the admin is actually looking at, so a mismatched
+    // pair cannot retire a question belonging to a different one.
+    .eq("lesson_id", lessonId);
   revalidatePath(`/admin/lessons/${lessonId}`);
 }
 

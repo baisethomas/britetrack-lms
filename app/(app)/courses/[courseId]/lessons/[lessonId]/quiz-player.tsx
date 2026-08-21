@@ -27,6 +27,7 @@ export function QuizPlayer({
   const [index, setIndex] = useState(0);
   const [selections, setSelections] = useState<Record<string, string[]>>({});
   const [pending, startTransition] = useTransition();
+  const [error, setError] = useState<string | null>(null);
 
   const question = questions[index];
   const chosen = selections[question.id] ?? [];
@@ -51,8 +52,10 @@ export function QuizPlayer({
   }
 
   function submit() {
+    setError(null);
     startTransition(async () => {
-      await submitQuizAttempt(
+      // A successful submission redirects, so anything returned is a failure.
+      const result = await submitQuizAttempt(
         lessonId,
         courseId,
         questions.map((q) => ({
@@ -60,6 +63,7 @@ export function QuizPlayer({
           option_ids: selections[q.id] ?? [],
         })),
       );
+      if (result?.error) setError(result.error);
     });
   }
 
@@ -148,6 +152,15 @@ export function QuizPlayer({
           </Button>
         )}
       </div>
+
+      {error && (
+        <p
+          role="alert"
+          className="mt-4 rounded-control bg-danger-soft p-3 text-sm text-danger"
+        >
+          {error} Your answers are still selected — try submitting again.
+        </p>
+      )}
     </Card>
   );
 }
