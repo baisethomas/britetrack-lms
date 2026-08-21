@@ -367,6 +367,39 @@ describe("quiz completion cannot be forged", () => {
     });
   });
 
+  it("blocks a student from un-completing a quiz they passed", async () => {
+    // Clearing completed_at would re-lock whatever sequential unlock had
+    // opened, so a pass has to be as unforgeable in one direction as the other.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 1 });
+      await enroll(db, courseId, student);
+
+      await db.asUser(student, (q) =>
+        q.run("select public.submit_quiz_attempt($1, $2::jsonb)", [
+          quiz.lessonId,
+          answerPayload(quiz.questionIds, quiz.correctIds),
+        ]),
+      );
+
+      const cleared = await db.asUser(student, (q) =>
+        q.attempt(
+          `update public.lesson_progress set completed_at = null
+           where lesson_id = $1 and student_id = $2 returning id`,
+          [quiz.lessonId, student],
+        ),
+      );
+      expect(cleared.ok && cleared.rows.length > 0).toBe(false);
+
+      const [progress] = await db.seed<{ completed_at: string | null }>(
+        "select completed_at from public.lesson_progress where lesson_id = $1 and student_id = $2",
+        [quiz.lessonId, student],
+      );
+      expect(progress.completed_at).not.toBeNull();
+    });
+  });
+
   it("still lets a student complete a non-quiz lesson", async () => {
     // The positive counterpart: the new rule must bite only on quizzes.
     await withRollback(async (db) => {

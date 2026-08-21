@@ -421,6 +421,12 @@ begin
     raise exception 'a question needs at least two options';
   end if;
 
+  -- Positions are allocated as max + 1, so two admins authoring for the same
+  -- lesson at once would compute the same number and one would lose the race
+  -- to the (lesson_id, position) unique constraint. Serialise per lesson; the
+  -- lock is released when the transaction ends.
+  perform pg_advisory_xact_lock(hashtext(p_lesson_id::text));
+
   select count(*) into v_correct_count
   from unnest(p_correct) c where c;
   if v_correct_count = 0 then
@@ -489,7 +495,14 @@ create policy "students write own progress" on public.lesson_progress
 
 drop policy if exists "students update own progress" on public.lesson_progress;
 create policy "students update own progress" on public.lesson_progress
-  for update using (student_id = auth.uid())
+  -- USING sees the row as it stands, so a quiz lesson already completed is not
+  -- updatable by its student at all: without this they could clear their own
+  -- completed_at, un-completing a quiz they passed and re-locking whatever
+  -- sequential unlock had opened. WITH CHECK below stops the reverse.
+  for update using (
+    student_id = auth.uid()
+    and (completed_at is null or not public.is_quiz_lesson(lesson_id))
+  )
   with check (
     student_id = auth.uid()
     and public.can_access_lesson(lesson_id)
