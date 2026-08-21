@@ -148,10 +148,15 @@ begin
     raise exception 'forbidden';
   end if;
 
+  -- Only a quiz lesson is completed by grading. Without this, questions
+  -- attached to a video or article by mistake would give this function a way
+  -- to stamp completion on a lesson whose state machine says otherwise — and
+  -- being definer, it bypasses the policies that would normally refuse.
   select pass_mark into v_pass_mark
-  from public.lessons where id = p_lesson_id;
+  from public.lessons
+  where id = p_lesson_id and content_type = 'quiz';
   if v_pass_mark is null then
-    raise exception 'lesson not found';
+    raise exception 'not a quiz lesson';
   end if;
 
   if not exists (

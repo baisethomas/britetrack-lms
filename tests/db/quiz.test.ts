@@ -256,6 +256,38 @@ describe("authoring a question", () => {
     });
   });
 
+  it("refuses to grade a lesson that is not a quiz", async () => {
+    // Grading is the only path that may complete a quiz lesson, and being
+    // definer it bypasses the policies guarding lesson_progress. So it has to
+    // refuse a lesson whose completion is governed by the ordinary rules,
+    // however that lesson came to have questions attached.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId, lessonIds } = await seedCourse(db, { lessonCount: 1 });
+      await enroll(db, courseId, student);
+
+      const [question] = await db.seed<{ id: string }>(
+        `insert into public.quiz_questions (lesson_id, prompt, position)
+         values ($1, 'Attached to a video lesson', 1) returning id`,
+        [lessonIds[0]],
+      );
+      await db.seed(
+        `insert into public.quiz_options (question_id, label, is_correct, position)
+         values ($1, 'Right', true, 1)`,
+        [question.id],
+      );
+
+      const result = await db.asUser(student, (q) =>
+        q.attempt("select public.submit_quiz_attempt($1, $2::jsonb)", [
+          lessonIds[0],
+          answerPayload([question.id], [[]]),
+        ]),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/not a quiz lesson/i);
+    });
+  });
+
   it("does not let a question without options block a pass", async () => {
     await withRollback(async (db) => {
       const student = await db.createUser({ email: "s@example.com", role: "student" });
