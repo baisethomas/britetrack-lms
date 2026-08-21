@@ -6,15 +6,26 @@ import { completeLesson, startLesson } from "@/lib/actions/learning";
 import { createClient } from "@/lib/supabase/server";
 import type { Course } from "@/lib/types";
 import { formatDuration } from "@/lib/progress";
+import {
+  countAttempts,
+  getAttemptReview,
+  getLatestAttempt,
+  getQuiz,
+} from "@/lib/quiz";
 import { Badge, Button, ButtonLink, Card } from "@/components/ui";
 import { CurriculumRail } from "./curriculum-rail";
+import { QuizPlayer } from "./quiz-player";
+import { QuizResults } from "./quiz-results";
 
 export default async function LessonPage({
   params,
+  searchParams,
 }: {
   params: Promise<{ courseId: string; lessonId: string }>;
+  searchParams: Promise<{ retake?: string }>;
 }) {
   const { courseId, lessonId } = await params;
+  const { retake } = await searchParams;
   const profile = await getProfile();
   const supabase = await createClient();
 
@@ -65,6 +76,21 @@ export default async function LessonPage({
 
   const prev = index > 0 ? lessons[index - 1] : null;
   const next = index < lessons.length - 1 ? lessons[index + 1] : null;
+
+  const isQuiz = lesson.content_type === "quiz";
+  const questions = isQuiz ? await getQuiz(lesson.id) : [];
+  const latestAttempt =
+    isQuiz && questions.length > 0
+      ? await getLatestAttempt(lesson.id, profile.id)
+      : null;
+  // A retake link re-opens the player over an existing result.
+  const showResults = Boolean(latestAttempt) && retake !== "1";
+  const [review, attemptCount] = latestAttempt
+    ? await Promise.all([
+        getAttemptReview(latestAttempt.id),
+        countAttempts(lesson.id, profile.id),
+      ])
+    : [[], 0];
 
   return (
     <div className="grid gap-6 lg:grid-cols-[300px_1fr]">
@@ -137,6 +163,32 @@ export default async function LessonPage({
           )}
         </Card>
 
+        {isQuiz &&
+          (questions.length === 0 ? (
+            <Card>
+              <p className="text-sm text-muted">
+                This quiz has no questions yet. Check back once an administrator
+                has added them.
+              </p>
+            </Card>
+          ) : showResults && latestAttempt ? (
+            <QuizResults
+              attempt={latestAttempt}
+              review={review}
+              questions={questions}
+              passMark={lesson.pass_mark}
+              retakeHref={`/courses/${courseId}/lessons/${lesson.id}?retake=1`}
+              attemptCount={attemptCount}
+            />
+          ) : (
+            <QuizPlayer
+              lessonId={lesson.id}
+              courseId={courseId}
+              passMark={lesson.pass_mark}
+              questions={questions}
+            />
+          ))}
+
         <div className="flex items-center justify-between gap-3">
           {prev ? (
             <ButtonLink
@@ -149,7 +201,15 @@ export default async function LessonPage({
             <span />
           )}
 
-          {profile.role === "student" && !lesson.completed ? (
+          {isQuiz ? (
+            next && !next.locked ? (
+              <ButtonLink href={`/courses/${courseId}/lessons/${next.id}`}>
+                Next lesson <ArrowRight className="size-4" aria-hidden />
+              </ButtonLink>
+            ) : (
+              <span />
+            )
+          ) : profile.role === "student" && !lesson.completed ? (
             <form action={completeLesson.bind(null, lesson.id, courseId)}>
               <Button type="submit">
                 <CheckCircle2 className="size-4" aria-hidden />

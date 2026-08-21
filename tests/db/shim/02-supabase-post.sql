@@ -9,3 +9,12 @@ grant all on all sequences in schema public to anon, authenticated;
 
 revoke all on public.lesson_catalog from anon;
 grant select on public.lesson_catalog to authenticated;
+
+-- Same for the quiz answer key: the migration locks these down, and the
+-- blanket grant above would otherwise hand them back.
+revoke all on public.quiz_questions from anon, authenticated;
+revoke all on public.quiz_options from anon, authenticated;
+revoke all on public.quiz_question_prompts from anon;
+revoke all on public.quiz_option_choices from anon;
+grant select on public.quiz_question_prompts to authenticated;
+grant select on public.quiz_option_choices to authenticated;

@@ -36,8 +36,10 @@ returns uuid
 language sql
 stable
 as $$
+  -- Tolerates the GUC being unset *and* being an empty string: a rolled-back
+  -- set_config leaves a custom GUC as '', which would fail a bare ::jsonb cast.
   select nullif(
-    current_setting('request.jwt.claims', true)::jsonb ->> 'sub',
+    nullif(current_setting('request.jwt.claims', true), '')::jsonb ->> 'sub',
     ''
   )::uuid;
 $$;

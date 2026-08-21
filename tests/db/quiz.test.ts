@@ -1,0 +1,574 @@
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { connect, disconnect, withRollback } from "./harness";
+import {
+  answerPayload,
+  completeLesson,
+  enroll,
+  linkParent,
+  seedCourse,
+  seedQuizLesson,
+} from "./fixtures";
+
+beforeAll(connect);
+afterAll(disconnect);
+
+describe("answer key confidentiality", () => {
+  it("does not expose is_correct through the student-facing views", async () => {
+    // The central guarantee: nothing a student can select reveals the key.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, student);
+
+      const columns = await db.asUser(student, (q) =>
+        q.run<{ column_name: string }>(
+          `select column_name from information_schema.columns
+           where table_schema = 'public'
+             and table_name in ('quiz_question_prompts', 'quiz_option_choices')`,
+        ),
+      );
+      const names = columns.map((c) => c.column_name);
+      expect(names).not.toContain("is_correct");
+      expect(names).not.toContain("explanation");
+      expect(names).toContain("label");
+    });
+  });
+
+  it("refuses direct reads of the underlying answer tables", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, student);
+
+      for (const table of ["quiz_options", "quiz_questions"]) {
+        const result = await db.asUser(student, (q) =>
+          q.attempt(`select * from public.${table}`),
+        );
+        expect(result.ok).toBe(false);
+        expect(result.error).toMatch(/permission denied/i);
+      }
+    });
+  });
+
+  it("lets an enrolled student read the prompts and choices", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 2 });
+      await enroll(db, courseId, student);
+
+      const prompts = await db.asUser(student, (q) =>
+        q.run("select id from public.quiz_question_prompts"),
+      );
+      expect(prompts).toHaveLength(quiz.questionIds.length);
+
+      const choices = await db.asUser(student, (q) =>
+        q.run("select id from public.quiz_option_choices"),
+      );
+      expect(choices).toHaveLength(quiz.questionIds.length * 3);
+    });
+  });
+
+  it("hides prompts from a student who is not enrolled", async () => {
+    await withRollback(async (db) => {
+      const outsider = await db.createUser({ email: "o@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      await seedQuizLesson(db, courseId);
+
+      const prompts = await db.asUser(outsider, (q) =>
+        q.run("select id from public.quiz_question_prompts"),
+      );
+      expect(prompts).toEqual([]);
+    });
+  });
+
+  it("hides prompts from anonymous callers", async () => {
+    await withRollback(async (db) => {
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      await seedQuizLesson(db, courseId);
+      const result = await db.asAnon((q) =>
+        q.attempt("select id from public.quiz_question_prompts"),
+      );
+      expect(result.ok).toBe(false);
+    });
+  });
+});
+
+describe("grading", () => {
+  it("scores a fully correct submission and passes", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 2 });
+      await enroll(db, courseId, student);
+
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, answerPayload(quiz.questionIds, quiz.correctIds)],
+        ),
+      );
+
+      const [attempt] = await db.seed<{
+        score: number;
+        max_score: number;
+        passed: boolean;
+      }>("select score, max_score, passed from public.quiz_attempts where id = $1", [
+        row.submit_quiz_attempt,
+      ]);
+      expect(attempt).toMatchObject({ score: 2, max_score: 2, passed: true });
+    });
+  });
+
+  it("scores a fully wrong submission and fails", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 2 });
+      await enroll(db, courseId, student);
+
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [
+            quiz.lessonId,
+            answerPayload(
+              quiz.questionIds,
+              quiz.wrongIds.map((w) => [w[0]]),
+            ),
+          ],
+        ),
+      );
+
+      const [attempt] = await db.seed<{ score: number; passed: boolean }>(
+        "select score, passed from public.quiz_attempts where id = $1",
+        [row.submit_quiz_attempt],
+      );
+      expect(attempt).toMatchObject({ score: 0, passed: false });
+    });
+  });
+
+  it("treats an unanswered question as wrong", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 2 });
+      await enroll(db, courseId, student);
+
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, answerPayload(quiz.questionIds, [quiz.correctIds[0], []])],
+        ),
+      );
+      const [attempt] = await db.seed<{ score: number; max_score: number }>(
+        "select score, max_score from public.quiz_attempts where id = $1",
+        [row.submit_quiz_attempt],
+      );
+      expect(attempt).toMatchObject({ score: 1, max_score: 2 });
+    });
+  });
+
+  it("requires an exact match on a multi-choice question", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 1 });
+      await enroll(db, courseId, student);
+
+      // Promote a distractor to correct: the key is now two options.
+      await db.seed(
+        "update public.quiz_options set is_correct = true where id = $1",
+        [quiz.wrongIds[0][0]],
+      );
+      await db.seed(
+        "update public.quiz_questions set kind = 'multi_choice' where id = $1",
+        [quiz.questionIds[0]],
+      );
+
+      // Only one of the two correct options — partial answers score nothing.
+      const [partial] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, answerPayload(quiz.questionIds, [quiz.correctIds[0]])],
+        ),
+      );
+      const [partialAttempt] = await db.seed<{ score: number }>(
+        "select score from public.quiz_attempts where id = $1",
+        [partial.submit_quiz_attempt],
+      );
+      expect(partialAttempt.score).toBe(0);
+
+      const [exact] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [
+            quiz.lessonId,
+            answerPayload(quiz.questionIds, [
+              [...quiz.correctIds[0], quiz.wrongIds[0][0]],
+            ]),
+          ],
+        ),
+      );
+      const [exactAttempt] = await db.seed<{ score: number }>(
+        "select score from public.quiz_attempts where id = $1",
+        [exact.submit_quiz_attempt],
+      );
+      expect(exactAttempt.score).toBe(1);
+    });
+  });
+
+  it("ignores option ids belonging to another question", async () => {
+    // A crafted payload must not be able to smuggle in foreign option ids.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 2 });
+      await enroll(db, courseId, student);
+
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [
+            quiz.lessonId,
+            answerPayload(quiz.questionIds, [
+              [...quiz.correctIds[0], ...quiz.correctIds[1]],
+              quiz.correctIds[1],
+            ]),
+          ],
+        ),
+      );
+      // Question 1 still grades as correct: the foreign id is discarded rather
+      // than treated as an extra selection that would break the exact match.
+      const [attempt] = await db.seed<{ score: number }>(
+        "select score from public.quiz_attempts where id = $1",
+        [row.submit_quiz_attempt],
+      );
+      expect(attempt.score).toBe(2);
+    });
+  });
+
+  it("honours the lesson's pass mark", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, {
+        questionCount: 2,
+        passMark: 100,
+      });
+      await enroll(db, courseId, student);
+
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, answerPayload(quiz.questionIds, [quiz.correctIds[0], []])],
+        ),
+      );
+      const [attempt] = await db.seed<{ passed: boolean }>(
+        "select passed from public.quiz_attempts where id = $1",
+        [row.submit_quiz_attempt],
+      );
+      // 50% against a 100% threshold.
+      expect(attempt.passed).toBe(false);
+    });
+  });
+});
+
+describe("attempt access control", () => {
+  it("refuses submission from a student who is not enrolled", async () => {
+    await withRollback(async (db) => {
+      const outsider = await db.createUser({ email: "o@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+
+      const result = await db.asUser(outsider, (q) =>
+        q.attempt("select public.submit_quiz_attempt($1, $2::jsonb)", [
+          quiz.lessonId,
+          answerPayload(quiz.questionIds, quiz.correctIds),
+        ]),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/forbidden/i);
+    });
+  });
+
+  it("refuses submission from an anonymous caller", async () => {
+    await withRollback(async (db) => {
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      const result = await db.asAnon((q) =>
+        q.attempt("select public.submit_quiz_attempt($1, $2::jsonb)", [
+          quiz.lessonId,
+          answerPayload(quiz.questionIds, quiz.correctIds),
+        ]),
+      );
+      expect(result.ok).toBe(false);
+    });
+  });
+
+  it("blocks a student from writing an attempt row directly", async () => {
+    // Scores are only ever produced by the grading function.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, student);
+
+      const result = await db.asUser(student, (q) =>
+        q.attempt(
+          `insert into public.quiz_attempts
+             (lesson_id, student_id, submitted_at, score, max_score, passed)
+           values ($1, $2, now(), 99, 99, true) returning id`,
+          [quiz.lessonId, student],
+        ),
+      );
+      expect(result.ok).toBe(false);
+    });
+  });
+
+  it("blocks a student from editing a graded attempt", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, student);
+
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, answerPayload(quiz.questionIds, quiz.wrongIds.map((w) => [w[0]]))],
+        ),
+      );
+
+      const result = await db.asUser(student, (q) =>
+        q.attempt(
+          "update public.quiz_attempts set passed = true, score = 99 where id = $1 returning id",
+          [row.submit_quiz_attempt],
+        ),
+      );
+      expect(result.ok && result.rows.length > 0).toBe(false);
+    });
+  });
+
+  it("lets a student read only their own attempts", async () => {
+    await withRollback(async (db) => {
+      const mine = await db.createUser({ email: "m@example.com", role: "student" });
+      const theirs = await db.createUser({ email: "t@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, mine);
+      await enroll(db, courseId, theirs);
+
+      for (const student of [mine, theirs]) {
+        await db.asUser(student, (q) =>
+          q.run("select public.submit_quiz_attempt($1, $2::jsonb)", [
+            quiz.lessonId,
+            answerPayload(quiz.questionIds, quiz.correctIds),
+          ]),
+        );
+      }
+
+      const rows = await db.asUser(mine, (q) =>
+        q.run<{ student_id: string }>("select student_id from public.quiz_attempts"),
+      );
+      expect(rows).toHaveLength(1);
+      expect(rows[0].student_id).toBe(mine);
+    });
+  });
+
+  it("lets a linked parent read their child's attempts", async () => {
+    await withRollback(async (db) => {
+      const parent = await db.createUser({ email: "p@example.com", role: "parent" });
+      const child = await db.createUser({ email: "c@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      await linkParent(db, parent, child);
+      await enroll(db, courseId, child);
+
+      await db.asUser(child, (q) =>
+        q.run("select public.submit_quiz_attempt($1, $2::jsonb)", [
+          quiz.lessonId,
+          answerPayload(quiz.questionIds, quiz.correctIds),
+        ]),
+      );
+
+      const rows = await db.asUser(parent, (q) =>
+        q.run("select id from public.quiz_attempts"),
+      );
+      expect(rows).toHaveLength(1);
+    });
+  });
+});
+
+describe("attempt review", () => {
+  it("returns the key and explanation once the attempt is graded", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 2 });
+      await enroll(db, courseId, student);
+
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, answerPayload(quiz.questionIds, [quiz.correctIds[0], []])],
+        ),
+      );
+
+      const review = await db.asUser(student, (q) =>
+        q.run<{
+          is_correct: boolean;
+          explanation: string;
+          correct_option_ids: string[];
+        }>("select * from public.quiz_attempt_review($1)", [row.submit_quiz_attempt]),
+      );
+      expect(review).toHaveLength(2);
+      expect(review[0].is_correct).toBe(true);
+      expect(review[1].is_correct).toBe(false);
+      expect(review[0].explanation).toBe("Because.");
+      expect(review[1].correct_option_ids).toEqual(quiz.correctIds[1]);
+    });
+  });
+
+  it("refuses to review somebody else's attempt", async () => {
+    await withRollback(async (db) => {
+      const owner = await db.createUser({ email: "o@example.com", role: "student" });
+      const nosy = await db.createUser({ email: "n@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, owner);
+      await enroll(db, courseId, nosy);
+
+      const [row] = await db.asUser(owner, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, answerPayload(quiz.questionIds, quiz.correctIds)],
+        ),
+      );
+
+      const result = await db.asUser(nosy, (q) =>
+        q.attempt("select * from public.quiz_attempt_review($1)", [
+          row.submit_quiz_attempt,
+        ]),
+      );
+      expect(result.ok).toBe(false);
+      expect(result.error).toMatch(/forbidden/i);
+    });
+  });
+});
+
+describe("lesson completion", () => {
+  it("completes the lesson on a pass", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, student);
+
+      await db.asUser(student, (q) =>
+        q.run("select public.submit_quiz_attempt($1, $2::jsonb)", [
+          quiz.lessonId,
+          answerPayload(quiz.questionIds, quiz.correctIds),
+        ]),
+      );
+
+      const [progress] = await db.seed<{ completed_at: string | null }>(
+        "select completed_at from public.lesson_progress where lesson_id = $1 and student_id = $2",
+        [quiz.lessonId, student],
+      );
+      expect(progress?.completed_at).not.toBeNull();
+    });
+  });
+
+  it("leaves the lesson incomplete on a fail", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, student);
+
+      await db.asUser(student, (q) =>
+        q.run("select public.submit_quiz_attempt($1, $2::jsonb)", [
+          quiz.lessonId,
+          answerPayload(quiz.questionIds, quiz.wrongIds.map((w) => [w[0]])),
+        ]),
+      );
+
+      const rows = await db.seed<{ completed_at: string | null }>(
+        "select completed_at from public.lesson_progress where lesson_id = $1 and student_id = $2",
+        [quiz.lessonId, student],
+      );
+      expect(rows[0]?.completed_at ?? null).toBeNull();
+    });
+  });
+
+  it("lets a retake pass after an earlier failure", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, student);
+
+      await db.asUser(student, (q) =>
+        q.run("select public.submit_quiz_attempt($1, $2::jsonb)", [
+          quiz.lessonId,
+          answerPayload(quiz.questionIds, quiz.wrongIds.map((w) => [w[0]])),
+        ]),
+      );
+      await db.asUser(student, (q) =>
+        q.run("select public.submit_quiz_attempt($1, $2::jsonb)", [
+          quiz.lessonId,
+          answerPayload(quiz.questionIds, quiz.correctIds),
+        ]),
+      );
+
+      const attempts = await db.seed<{ passed: boolean }>(
+        "select passed from public.quiz_attempts where student_id = $1 order by started_at",
+        [student],
+      );
+      expect(attempts.map((a) => a.passed)).toEqual([false, true]);
+
+      const [progress] = await db.seed<{ completed_at: string | null }>(
+        "select completed_at from public.lesson_progress where lesson_id = $1 and student_id = $2",
+        [quiz.lessonId, student],
+      );
+      expect(progress?.completed_at).not.toBeNull();
+    });
+  });
+
+  it("unlocks the next lesson once the quiz is passed", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId, lessonIds } = await seedCourse(db, { lessonCount: 1 });
+      const quiz = await seedQuizLesson(db, courseId, { position: 2 });
+      const [after] = await db.seed<{ id: string }>(
+        `insert into public.lessons (course_id, title, content, position)
+         values ($1, 'After the quiz', 'body', 3) returning id`,
+        [courseId],
+      );
+      await enroll(db, courseId, student);
+      await completeLesson(db, lessonIds[0], student);
+
+      // Sequential unlock: the lesson after the quiz is out of reach until the
+      // quiz itself is passed.
+      const before = await db.asUser(student, (q) =>
+        q.run<{ can: boolean }>("select public.can_access_lesson($1) as can", [after.id]),
+      );
+      expect(before[0].can).toBe(false);
+
+      await db.asUser(student, (q) =>
+        q.run("select public.submit_quiz_attempt($1, $2::jsonb)", [
+          quiz.lessonId,
+          answerPayload(quiz.questionIds, quiz.correctIds),
+        ]),
+      );
+
+      const now = await db.asUser(student, (q) =>
+        q.run<{ can: boolean }>("select public.can_access_lesson($1) as can", [after.id]),
+      );
+      expect(now[0].can).toBe(true);
+    });
+  });
+});

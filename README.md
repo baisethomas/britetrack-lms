@@ -25,6 +25,9 @@ with Tailwind CSS v4.
 - **Admin tooling** — course/lesson authoring with draft → publish → archive
   lifecycle, user role management, bulk enrollment by pasted email list, and an
   overview dashboard (students, courses, enrollments, completion rate).
+- **Quizzes** — single-answer and select-all questions with a per-lesson pass
+  mark. Graded entirely in the database, so the answer key never reaches the
+  browser; passing is what completes the lesson, and retakes are unlimited.
 - **Live sessions** — Zoom meetings attached to courses; a webhook edge
   function verifies Zoom's HMAC signature and stores recording links
   automatically.

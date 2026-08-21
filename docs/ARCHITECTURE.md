@@ -62,6 +62,32 @@ reset by cron.
 Bulk enrollment, previously an edge-function stub, is an in-app admin form —
 it needs the admin's session and RLS, not the service role.
 
+## Quizzes: the answer key never leaves the database
+
+A quiz lesson has questions and options, and the load-bearing requirement is
+that a student cannot discover which option is correct. RLS has no column-level
+security, so hiding a column is not something a policy can express. Instead:
+
+- `quiz_questions` and `quiz_options` are **admin-only at the table level** —
+  `REVOKE`d from `anon` and `authenticated` outright.
+- Students read `quiz_question_prompts` and `quiz_option_choices`, views that
+  simply do not contain `is_correct` or `explanation`. They inherit the
+  lesson's own access rule via `can_access_lesson()`.
+- Grading happens in `submit_quiz_attempt()`, a `SECURITY DEFINER` function —
+  the only thing permitted to read the key. It re-checks lesson access itself
+  rather than trusting the caller, discards option ids that belong to another
+  question, and scores all-or-nothing per question.
+- `quiz_attempts` has **no student INSERT or UPDATE policy**. Scores exist only
+  because the grading function produced them, so a pass cannot be forged the
+  way a hand-written row could be.
+- `quiz_attempt_review()` returns the key and explanations, but only for an
+  attempt that is already submitted and only to its owner, their linked
+  parents, or an admin.
+
+Passing is what completes a quiz lesson — there is no "mark complete" button —
+so a quiz genuinely gates the next lesson under sequential unlock. Retakes are
+unlimited; every attempt is kept.
+
 ## Data model
 
 ```
@@ -73,7 +99,13 @@ enrollments (course_id, student_id, completed_at)
 lesson_progress (lesson_id, student_id, started_at, completed_at)
 live_sessions (course_id, zoom_meeting_id, join_url, recording_url)
 notifications (user_id, type, read_at)
+quiz_questions (lesson_id, prompt, explanation, kind, points, position)
+quiz_options (question_id, label, is_correct, position)
+quiz_attempts (lesson_id, student_id, score, max_score, passed, submitted_at)
+quiz_answers (attempt_id, question_id, selected_option_ids, is_correct)
 ```
+
+`lessons.pass_mark` is the percent of available points a quiz lesson requires.
 
 `enrollments.completed_at` is derived by a database trigger
 (`sync_enrollment_completion`) when the last lesson of a course is completed —
