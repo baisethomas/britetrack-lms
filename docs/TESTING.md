@@ -141,8 +141,9 @@ confirming the suite fails. For example, dropping `can_access_lesson` from the
 progress-insert policy must break *blocks completing a locked lesson*; relaxing
 the live-session policy to `auth.uid() is not null` must break *hides Zoom
 links from a signed-in user who is not enrolled*; and relaxing the
-`admins manage options` policy to `using (true)` must break both answer-key
-tests.
+`admins read options` policy to `using (true)` must break both answer-key
+tests; and granting `authenticated` delete on `quiz_questions` must break
+*refuses even an admin's direct delete*.
 
 Assert on rows, not on error text. The answer-key tests originally expected
 `permission denied`, which made them sensitive to how access was refused rather

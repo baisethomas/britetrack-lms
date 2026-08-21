@@ -16,8 +16,8 @@ grant select on public.lesson_catalog to authenticated;
 -- admin-only RLS policies are what exclude students.
 revoke all on public.quiz_questions from anon, authenticated;
 revoke all on public.quiz_options from anon, authenticated;
-grant select, insert, update, delete on public.quiz_questions to authenticated;
-grant select, insert, update, delete on public.quiz_options to authenticated;
+grant select, insert, update on public.quiz_questions to authenticated;
+grant select, insert, update on public.quiz_options to authenticated;
 revoke all on public.quiz_question_prompts from anon;
 revoke all on public.quiz_option_choices from anon;
 grant select on public.quiz_question_prompts to authenticated;

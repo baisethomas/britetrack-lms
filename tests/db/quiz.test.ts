@@ -236,6 +236,51 @@ describe("authoring a question", () => {
     });
   });
 
+  it("refuses even an admin's direct delete, so scored attempts stay explicable", async () => {
+    // Archiving is only a guarantee if the database enforces it. quiz_answers
+    // cascades from quiz_questions, so a delete through the API rather than the
+    // UI would erase the answers behind an already-scored attempt.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const admin = await db.createUser({ email: "a@example.com" });
+      await db.setRole(admin, "admin");
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 1 });
+      await enroll(db, courseId, student);
+
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, answerPayload(quiz.questionIds, quiz.correctIds)],
+        ),
+      );
+
+      const deletedQuestion = await db.asUser(admin, (q) =>
+        q.attempt("delete from public.quiz_questions where id = $1 returning id", [
+          quiz.questionIds[0],
+        ]),
+      );
+      expect(deletedQuestion.ok && deletedQuestion.rows.length > 0).toBe(false);
+
+      const deletedOption = await db.asUser(admin, (q) =>
+        q.attempt("delete from public.quiz_options where question_id = $1 returning id", [
+          quiz.questionIds[0],
+        ]),
+      );
+      expect(deletedOption.ok && deletedOption.rows.length > 0).toBe(false);
+
+      // The attempt still has its breakdown, labels and all.
+      const review = await db.asUser(student, (q) =>
+        q.run<{ correct_labels: string[] }>(
+          "select correct_labels from public.quiz_attempt_review($1)",
+          [row.submit_quiz_attempt],
+        ),
+      );
+      expect(review).toHaveLength(1);
+      expect(review[0].correct_labels).toEqual(["Option 1"]);
+    });
+  });
+
   it("refuses a student", async () => {
     await withRollback(async (db) => {
       const student = await db.createUser({ email: "s@example.com", role: "student" });

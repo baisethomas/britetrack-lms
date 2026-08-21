@@ -116,7 +116,10 @@ make an old result claim it needed a mark it never did. And retiring a question
 sets `archived_at` rather than deleting it: a delete would cascade its
 `quiz_answers` away while the attempt's stored score still counted them.
 Archived questions disappear from the player and from future grading; past
-results keep them. `quiz_attempt_review()` therefore returns option *labels*
+results keep them. The database enforces that rather than trusting the UI to:
+there is no DELETE policy on `quiz_questions` or `quiz_options` and no delete
+grant, so retirement through `archived_at` is the only route an admin has. A
+retention guarantee the database does not enforce is only a comment. `quiz_attempt_review()` therefore returns option *labels*
 alongside their ids: the student-facing views no longer carry an archived
 question's options, so a review that resolved ids against the live quiz would
 render a retired answer blank.

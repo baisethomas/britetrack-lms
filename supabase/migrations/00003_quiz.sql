@@ -89,8 +89,10 @@ create view public.quiz_option_choices as
 -- are what exclude students, who match no policy and so read no rows.
 revoke all on public.quiz_questions from anon, authenticated;
 revoke all on public.quiz_options from anon, authenticated;
-grant select, insert, update, delete on public.quiz_questions to authenticated;
-grant select, insert, update, delete on public.quiz_options to authenticated;
+-- No DELETE: questions and options are retired with archived_at, never
+-- removed, so that attempts already scored against them stay explicable.
+grant select, insert, update on public.quiz_questions to authenticated;
+grant select, insert, update on public.quiz_options to authenticated;
 revoke all on public.quiz_question_prompts from anon;
 revoke all on public.quiz_option_choices from anon;
 grant select on public.quiz_question_prompts to authenticated;
@@ -312,10 +314,29 @@ alter table public.quiz_attempts enable row level security;
 alter table public.quiz_answers enable row level security;
 
 -- Authoring is admin-only; students never touch these tables directly.
-create policy "admins manage questions" on public.quiz_questions
-  for all using (public.current_user_role() = 'admin');
-create policy "admins manage options" on public.quiz_options
-  for all using (public.current_user_role() = 'admin');
+--
+-- Deliberately no DELETE policy on either table. quiz_answers cascades from
+-- quiz_questions, so deleting a question would erase the answers of attempts
+-- already scored against it, leaving a stored score with no breakdown to
+-- explain it — and deleting an option would strip its label out of past
+-- reviews. Retirement is `archived_at`, which grading and the student-facing
+-- views both respect. A retention guarantee the database does not enforce is
+-- only a comment.
+create policy "admins read questions" on public.quiz_questions
+  for select using (public.current_user_role() = 'admin');
+create policy "admins add questions" on public.quiz_questions
+  for insert with check (public.current_user_role() = 'admin');
+create policy "admins edit questions" on public.quiz_questions
+  for update using (public.current_user_role() = 'admin')
+  with check (public.current_user_role() = 'admin');
+
+create policy "admins read options" on public.quiz_options
+  for select using (public.current_user_role() = 'admin');
+create policy "admins add options" on public.quiz_options
+  for insert with check (public.current_user_role() = 'admin');
+create policy "admins edit options" on public.quiz_options
+  for update using (public.current_user_role() = 'admin')
+  with check (public.current_user_role() = 'admin');
 
 -- Attempts are created by submit_quiz_attempt(), never inserted by a client,
 -- so there is deliberately no student INSERT or UPDATE policy: a score cannot
