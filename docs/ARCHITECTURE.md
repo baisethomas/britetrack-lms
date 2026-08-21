@@ -88,6 +88,17 @@ security, so hiding a column is not something a policy can express. Instead:
   attempt that is already submitted and only to its owner, their linked
   parents, or an admin.
 
+The guarantee is therefore about a quiz *in progress*: nothing a student can
+read while answering reveals the key. Review deliberately reveals it
+afterwards, which is what makes a wrong answer worth anything pedagogically.
+Combined with unlimited retakes that means a determined student can submit an
+empty attempt, read the answers, and retake to pass — so a quiz here is a
+learning checkpoint, not an invigilated exam. Unlimited retakes alone already
+imply that: all-or-nothing scoring and no attempt limit means enough tries
+eventually pass. If a quiz ever needs to gate something that matters, the
+lever is attempt limits or withholding review until a pass, not tightening the
+answer-key path.
+
 Passing is what completes a quiz lesson — there is no "mark complete" button —
 so a quiz genuinely gates the next lesson under sequential unlock. That claim
 has to hold in the database or it holds nowhere: the generic `lesson_progress`

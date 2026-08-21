@@ -27,7 +27,9 @@ with Tailwind CSS v4.
   overview dashboard (students, courses, enrollments, completion rate).
 - **Quizzes** — single-answer and select-all questions with a per-lesson pass
   mark. Graded entirely in the database, so the answer key never reaches the
-  browser; passing is what completes the lesson, and retakes are unlimited.
+  browser while a quiz is being taken; correct answers and explanations appear
+  only in the review of an attempt already submitted. Passing is what completes
+  the lesson, and retakes are unlimited.
 - **Live sessions** — Zoom meetings attached to courses; a webhook edge
   function verifies Zoom's HMAC signature and stores recording links
   automatically.
