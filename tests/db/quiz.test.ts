@@ -256,6 +256,65 @@ describe("authoring a question", () => {
     });
   });
 
+  it("treats a repeated question_id as the union of its selections", async () => {
+    // A crafted payload may name the same question twice. The selections are
+    // unioned, which grants nothing: a single entry can already carry any set
+    // of option ids, so splitting them across entries reaches no set that one
+    // entry could not. Exact match against the key is what does the work.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 1 });
+      await enroll(db, courseId, student);
+
+      // Two correct options out of three, so a union is expressible.
+      await db.seed("update public.quiz_options set is_correct = true where id = $1", [
+        quiz.wrongIds[0][0],
+      ]);
+      await db.seed(
+        "update public.quiz_questions set kind = 'multi_choice' where id = $1",
+        [quiz.questionIds[0]],
+      );
+
+      const split = JSON.stringify([
+        { question_id: quiz.questionIds[0], option_ids: quiz.correctIds[0] },
+        { question_id: quiz.questionIds[0], option_ids: [quiz.wrongIds[0][0]] },
+      ]);
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, split],
+        ),
+      );
+
+      // Identical to submitting both ids in one entry — and still only correct
+      // because those two ids happen to be the key.
+      const [attempt] = await db.seed<{ score: number }>(
+        "select score from public.quiz_attempts where id = $1",
+        [row.submit_quiz_attempt],
+      );
+      expect(attempt.score).toBe(1);
+
+      // The same trick with a wrong option in the union scores nothing, so
+      // duplication cannot turn guesses into a pass.
+      const wrongSplit = JSON.stringify([
+        { question_id: quiz.questionIds[0], option_ids: [quiz.correctIds[0][0]] },
+        { question_id: quiz.questionIds[0], option_ids: [quiz.wrongIds[0][1]] },
+      ]);
+      const [second] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, wrongSplit],
+        ),
+      );
+      const [secondAttempt] = await db.seed<{ score: number }>(
+        "select score from public.quiz_attempts where id = $1",
+        [second.submit_quiz_attempt],
+      );
+      expect(secondAttempt.score).toBe(0);
+    });
+  });
+
   it("refuses to grade a lesson that is not a quiz", async () => {
     // Grading is the only path that may complete a quiz lesson, and being
     // definer it bypasses the policies guarding lesson_progress. So it has to
