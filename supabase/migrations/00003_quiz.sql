@@ -25,6 +25,10 @@ create table public.quiz_questions (
   kind public.quiz_question_kind not null default 'single_choice',
   points int not null default 1 check (points > 0),
   position int not null,
+  -- Retiring a question archives it rather than deleting it: past attempts
+  -- reference it through quiz_answers, and a cascade would leave their stored
+  -- score describing questions that no longer exist.
+  archived_at timestamptz,
   created_at timestamptz not null default now(),
   unique (lesson_id, position)
 );
@@ -50,6 +54,9 @@ create table public.quiz_attempts (
   submitted_at timestamptz,
   score int,
   max_score int,
+  -- The threshold actually applied, so a later change to lessons.pass_mark
+  -- cannot rewrite what a historical result claims was required.
+  pass_mark int,
   passed boolean
 );
 
@@ -75,8 +82,15 @@ create view public.quiz_option_choices as
   select o.id, o.question_id, o.label, o.position
   from public.quiz_options o;
 
+-- Authoring happens through the app with the admin's own session, and Supabase
+-- runs every signed-in caller as `authenticated` — there is no separate admin
+-- database role to grant to. So the answer-key tables are withheld from `anon`
+-- entirely and left to RLS for `authenticated`: the admin-only policies below
+-- are what exclude students, who match no policy and so read no rows.
 revoke all on public.quiz_questions from anon, authenticated;
 revoke all on public.quiz_options from anon, authenticated;
+grant select, insert, update, delete on public.quiz_questions to authenticated;
+grant select, insert, update, delete on public.quiz_options to authenticated;
 revoke all on public.quiz_question_prompts from anon;
 revoke all on public.quiz_option_choices from anon;
 grant select on public.quiz_question_prompts to authenticated;
@@ -140,7 +154,10 @@ begin
     raise exception 'lesson not found';
   end if;
 
-  if not exists (select 1 from public.quiz_questions where lesson_id = p_lesson_id) then
+  if not exists (
+    select 1 from public.quiz_questions
+    where lesson_id = p_lesson_id and archived_at is null
+  ) then
     raise exception 'lesson has no questions';
   end if;
 
@@ -151,7 +168,7 @@ begin
   for v_question in
     select q.id, q.points
     from public.quiz_questions q
-    where q.lesson_id = p_lesson_id
+    where q.lesson_id = p_lesson_id and q.archived_at is null
     order by q.position
   loop
     v_max := v_max + v_question.points;
@@ -190,6 +207,7 @@ begin
   set submitted_at = now(),
       score = v_score,
       max_score = v_max,
+      pass_mark = v_pass_mark,
       passed = v_passed
   where id = v_attempt;
 
@@ -311,15 +329,17 @@ create policy "read answers of visible attempts" on public.quiz_answers
 create or replace view public.quiz_question_prompts as
   select q.id, q.lesson_id, q.prompt, q.kind, q.points, q.position
   from public.quiz_questions q
-  where public.can_access_lesson(q.lesson_id)
-     or public.current_user_role() = 'admin';
+  where q.archived_at is null
+    and (public.can_access_lesson(q.lesson_id)
+         or public.current_user_role() = 'admin');
 
 create or replace view public.quiz_option_choices as
   select o.id, o.question_id, o.label, o.position
   from public.quiz_options o
   join public.quiz_questions q on q.id = o.question_id
-  where public.can_access_lesson(q.lesson_id)
-     or public.current_user_role() = 'admin';
+  where q.archived_at is null
+    and (public.can_access_lesson(q.lesson_id)
+         or public.current_user_role() = 'admin');
 
 -- Expose pass_mark for browsing so a quiz lesson can advertise its threshold.
 create or replace view public.lesson_catalog as

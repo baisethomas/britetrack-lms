@@ -16,6 +16,7 @@ export function QuizResults({
   passMark,
   retakeHref,
   attemptCount,
+  lessonCompleted,
 }: {
   attempt: QuizAttempt;
   review: QuizReviewRow[];
@@ -23,35 +24,56 @@ export function QuizResults({
   passMark: number;
   retakeHref: string;
   attemptCount: number;
+  /** True once any attempt has passed — a later failed retake cannot undo it. */
+  lessonCompleted: boolean;
 }) {
   const percent = completionPercent(attempt.score ?? 0, attempt.max_score ?? 0);
+  // Show the threshold this attempt was actually graded against; an admin may
+  // have moved the lesson's pass mark since. Older attempts predate the column.
+  const appliedPassMark = attempt.pass_mark ?? passMark;
+  // A failed retake after an earlier pass: the lesson stays complete, so the
+  // headline has to describe the attempt without contradicting that.
+  const passedEarlier = lessonCompleted && !attempt.passed;
   const labelFor = new Map(
     questions.flatMap((q) => q.options.map((o) => [o.id, o.label] as const)),
   );
 
   return (
     <div className="space-y-4">
-      <Card className={attempt.passed ? "border-success/40" : "border-warning/40"}>
+      <Card
+        className={
+          attempt.passed || passedEarlier ? "border-success/40" : "border-warning/40"
+        }
+      >
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              {attempt.passed ? (
+              {attempt.passed || passedEarlier ? (
                 <CheckCircle2 className="size-5 text-success" aria-hidden />
               ) : (
                 <XCircle className="size-5 text-warning" aria-hidden />
               )}
               <h2 className="text-title font-semibold text-ink">
-                {attempt.passed ? "Passed" : "Not passed yet"}
+                {attempt.passed
+                  ? "Passed"
+                  : passedEarlier
+                    ? "This retake fell short"
+                    : "Not passed yet"}
               </h2>
             </div>
             <p className="mt-1 text-sm text-muted tabular-nums">
               {attempt.score} of {attempt.max_score} points · {Math.round(percent)}%
               {" · "}
-              {passMark}% needed
+              {appliedPassMark}% needed
             </p>
+            {passedEarlier && (
+              <p className="mt-1 text-sm text-muted">
+                You passed this quiz earlier, so the lesson stays complete.
+              </p>
+            )}
           </div>
           {!attempt.passed && (
-            <ButtonLink href={retakeHref}>
+            <ButtonLink href={retakeHref} variant={passedEarlier ? "secondary" : "primary"}>
               <RotateCcw className="size-4" aria-hidden /> Try again
             </ButtonLink>
           )}
@@ -112,7 +134,7 @@ export function QuizResults({
         ))}
       </div>
 
-      {attempt.passed && (
+      {(attempt.passed || passedEarlier) && (
         <p className="text-sm text-muted">
           This lesson is complete.{" "}
           <Link href={retakeHref} className="text-ink-accent hover:underline">

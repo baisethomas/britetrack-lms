@@ -39,6 +39,7 @@ export default async function AdminLessonPage({
     .from("quiz_questions")
     .select("*, quiz_options(id, label, is_correct, position)")
     .eq("lesson_id", lessonId)
+    .is("archived_at", null)
     .order("position");
 
   const authored = (questions ?? []) as AuthoredQuestion[];
@@ -115,7 +116,7 @@ export default async function AdminLessonPage({
                     <form action={deleteQuizQuestion.bind(null, question.id, lessonId)}>
                       <button
                         type="submit"
-                        title="Delete question"
+                        title="Retire question — it stops appearing in the quiz, and past results keep it"
                         className="rounded-control p-2 text-subtle hover:bg-danger-soft hover:text-danger"
                       >
                         <Trash2 className="size-4" aria-hidden />

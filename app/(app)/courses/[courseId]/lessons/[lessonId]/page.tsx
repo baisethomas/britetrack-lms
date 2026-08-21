@@ -179,6 +179,7 @@ export default async function LessonPage({
               passMark={lesson.pass_mark}
               retakeHref={`/courses/${courseId}/lessons/${lesson.id}?retake=1`}
               attemptCount={attemptCount}
+              lessonCompleted={lesson.completed}
             />
           ) : (
             <QuizPlayer

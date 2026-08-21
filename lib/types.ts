@@ -124,6 +124,8 @@ export interface QuizAttempt {
   submitted_at: string | null;
   score: number | null;
   max_score: number | null;
+  /** The threshold applied when this attempt was graded. */
+  pass_mark: number | null;
   passed: boolean | null;
 }
 

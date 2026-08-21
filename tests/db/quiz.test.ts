@@ -35,7 +35,12 @@ describe("answer key confidentiality", () => {
     });
   });
 
-  it("refuses direct reads of the underlying answer tables", async () => {
+  it("yields no answer-key rows on a direct read by a student", async () => {
+    // `authenticated` holds table privileges so that admins can author, so the
+    // barrier here is RLS, not the grant: a student matches no policy and must
+    // come away with nothing. Asserting on rows rather than on a permission
+    // error is deliberate — an error would also pass if the key were readable
+    // by some other route.
     await withRollback(async (db) => {
       const student = await db.createUser({ email: "s@example.com", role: "student" });
       const { courseId } = await seedCourse(db, { lessonCount: 0 });
@@ -46,9 +51,81 @@ describe("answer key confidentiality", () => {
         const result = await db.asUser(student, (q) =>
           q.attempt(`select * from public.${table}`),
         );
-        expect(result.ok).toBe(false);
-        expect(result.error).toMatch(/permission denied/i);
+        expect(result.ok && result.rows.length > 0).toBe(false);
       }
+    });
+  });
+
+  it("keeps the key from a student who tries to write it", async () => {
+    // The other half of the grant question: DML on the key tables must be
+    // admin-only, or a student could simply mark their own choice correct.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+      await enroll(db, courseId, student);
+
+      const flipped = await db.asUser(student, (q) =>
+        q.attempt(
+          `update public.quiz_options set is_correct = true
+           where question_id = $1 returning id`,
+          [quiz.questionIds[0]],
+        ),
+      );
+      expect(flipped.ok && flipped.rows.length > 0).toBe(false);
+
+      const inserted = await db.asUser(student, (q) =>
+        q.attempt(
+          `insert into public.quiz_questions (lesson_id, prompt, position)
+           values ($1, 'mine', 99) returning id`,
+          [quiz.lessonId],
+        ),
+      );
+      expect(inserted.ok && inserted.rows.length > 0).toBe(false);
+    });
+  });
+
+  it("lets an admin author questions and options through their own session", async () => {
+    // Supabase runs admins as `authenticated` like everyone else, so revoking
+    // that role's privileges outright would break authoring before any policy
+    // ran. This is the positive counterpart that would catch it.
+    await withRollback(async (db) => {
+      const admin = await db.createUser({ email: "a@example.com" });
+      await db.setRole(admin, "admin");
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId);
+
+      const existing = await db.asUser(admin, (q) =>
+        q.run("select id, is_correct from public.quiz_options"),
+      );
+      expect(existing.length).toBeGreaterThan(0);
+
+      const created = await db.asUser(admin, (q) =>
+        q.run<{ id: string }>(
+          `insert into public.quiz_questions (lesson_id, prompt, position)
+           values ($1, 'Added by an admin', 99) returning id`,
+          [quiz.lessonId],
+        ),
+      );
+      expect(created).toHaveLength(1);
+
+      const option = await db.asUser(admin, (q) =>
+        q.run<{ id: string }>(
+          `insert into public.quiz_options (question_id, label, is_correct, position)
+           values ($1, 'Correct one', true, 1) returning id`,
+          [created[0].id],
+        ),
+      );
+      expect(option).toHaveLength(1);
+
+      const archived = await db.asUser(admin, (q) =>
+        q.run<{ id: string }>(
+          `update public.quiz_questions set archived_at = now()
+           where id = $1 returning id`,
+          [created[0].id],
+        ),
+      );
+      expect(archived).toHaveLength(1);
     });
   });
 
@@ -96,7 +173,106 @@ describe("answer key confidentiality", () => {
   });
 });
 
+describe("archived questions", () => {
+  it("drops an archived question from grading and from the student's view", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 2 });
+      await enroll(db, courseId, student);
+
+      await db.seed("update public.quiz_questions set archived_at = now() where id = $1", [
+        quiz.questionIds[1],
+      ]);
+
+      const prompts = await db.asUser(student, (q) =>
+        q.run("select id from public.quiz_question_prompts"),
+      );
+      expect(prompts).toHaveLength(1);
+
+      // Answering only the surviving question is now a full score.
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [
+            quiz.lessonId,
+            answerPayload([quiz.questionIds[0]], [quiz.correctIds[0]]),
+          ],
+        ),
+      );
+
+      const [attempt] = await db.seed<{ max_score: number; passed: boolean }>(
+        "select max_score, passed from public.quiz_attempts where id = $1",
+        [row.submit_quiz_attempt],
+      );
+      expect(attempt).toMatchObject({ max_score: 1, passed: true });
+    });
+  });
+
+  it("keeps a past attempt's answers when a question is archived", async () => {
+    // The reason archiving exists: deleting would cascade quiz_answers away
+    // and leave the stored score describing questions that no longer exist.
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, { questionCount: 2 });
+      await enroll(db, courseId, student);
+
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [quiz.lessonId, answerPayload(quiz.questionIds, quiz.correctIds)],
+        ),
+      );
+
+      await db.seed("update public.quiz_questions set archived_at = now() where id = $1", [
+        quiz.questionIds[1],
+      ]);
+
+      const review = await db.asUser(student, (q) =>
+        q.run("select question_id from public.quiz_attempt_review($1)", [
+          row.submit_quiz_attempt,
+        ]),
+      );
+      expect(review).toHaveLength(2);
+    });
+  });
+});
+
 describe("grading", () => {
+  it("records the pass mark it applied, so a later change cannot rewrite it", async () => {
+    await withRollback(async (db) => {
+      const student = await db.createUser({ email: "s@example.com", role: "student" });
+      const { courseId } = await seedCourse(db, { lessonCount: 0 });
+      const quiz = await seedQuizLesson(db, courseId, {
+        questionCount: 2,
+        passMark: 50,
+      });
+      await enroll(db, courseId, student);
+
+      const [row] = await db.asUser(student, (q) =>
+        q.run<{ submit_quiz_attempt: string }>(
+          "select public.submit_quiz_attempt($1, $2::jsonb)",
+          [
+            quiz.lessonId,
+            answerPayload(quiz.questionIds, [quiz.correctIds[0], quiz.wrongIds[1]]),
+          ],
+        ),
+      );
+
+      // 1 of 2 = 50%, which cleared the bar at submission time.
+      await db.seed("update public.lessons set pass_mark = 100 where id = $1", [
+        quiz.lessonId,
+      ]);
+
+      const [attempt] = await db.seed<{ pass_mark: number; passed: boolean }>(
+        "select pass_mark, passed from public.quiz_attempts where id = $1",
+        [row.submit_quiz_attempt],
+      );
+      expect(attempt).toMatchObject({ pass_mark: 50, passed: true });
+    });
+  });
+
   it("scores a fully correct submission and passes", async () => {
     await withRollback(async (db) => {
       const student = await db.createUser({ email: "s@example.com", role: "student" });

@@ -70,14 +70,20 @@ export async function addQuizQuestion(
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  const labels = formData
-    .getAll("option_label")
-    .map((v) => String(v).trim())
-    .filter(Boolean);
+  // "Correct" is flagged by the option's index in the form, so blank rows have
+  // to be dropped without renumbering the ones that remain — compacting first
+  // would shift the flags onto the wrong options.
   const correct = new Set(formData.getAll("option_correct").map((v) => String(v)));
+  const options = formData
+    .getAll("option_label")
+    .map((v, formIndex) => ({
+      label: String(v).trim(),
+      isCorrect: correct.has(String(formIndex)),
+    }))
+    .filter((o) => o.label !== "");
 
-  if (labels.length < 2) return { error: "Add at least two options" };
-  const correctCount = labels.filter((_, i) => correct.has(String(i))).length;
+  if (options.length < 2) return { error: "Add at least two options" };
+  const correctCount = options.filter((o) => o.isCorrect).length;
   if (correctCount === 0) return { error: "Mark at least one option correct" };
   if (parsed.data.kind === "single_choice" && correctCount > 1) {
     return { error: "A single-choice question needs exactly one correct option" };
@@ -100,10 +106,10 @@ export async function addQuizQuestion(
   if (error) return { error: error.message };
 
   const { error: optionError } = await supabase.from("quiz_options").insert(
-    labels.map((label, i) => ({
+    options.map((option, i) => ({
       question_id: question.id,
-      label,
-      is_correct: correct.has(String(i)),
+      label: option.label,
+      is_correct: option.isCorrect,
       position: i + 1,
     })),
   );
@@ -113,6 +119,12 @@ export async function addQuizQuestion(
   return { error: null, success: "Question added" };
 }
 
+/**
+ * Retire a question. This archives rather than deletes: students who already
+ * answered it have a stored score that counted it, and deleting would cascade
+ * their answers away, leaving a graded total no breakdown can account for.
+ * Archived questions vanish from the player and from future grading.
+ */
 export async function deleteQuizQuestion(
   questionId: string,
   lessonId: string,
@@ -121,7 +133,10 @@ export async function deleteQuizQuestion(
   if (profile.role !== "admin") redirect("/dashboard");
 
   const supabase = await createClient();
-  await supabase.from("quiz_questions").delete().eq("id", questionId);
+  await supabase
+    .from("quiz_questions")
+    .update({ archived_at: new Date().toISOString() })
+    .eq("id", questionId);
   revalidatePath(`/admin/lessons/${lessonId}`);
 }
 
