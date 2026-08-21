@@ -68,8 +68,12 @@ A quiz lesson has questions and options, and the load-bearing requirement is
 that a student cannot discover which option is correct. RLS has no column-level
 security, so hiding a column is not something a policy can express. Instead:
 
-- `quiz_questions` and `quiz_options` are **admin-only at the table level** —
-  `REVOKE`d from `anon` and `authenticated` outright.
+- `quiz_questions` and `quiz_options` are **admin-only through RLS**, and
+  `REVOKE`d from `anon` outright. They cannot be revoked from `authenticated`:
+  Supabase runs every signed-in caller under that one role, so admins author
+  through it too, and a blanket revoke denies them before any policy is
+  evaluated. The admin-only policies are what exclude students, who match no
+  policy and so read no rows.
 - Students read `quiz_question_prompts` and `quiz_option_choices`, views that
   simply do not contain `is_correct` or `explanation`. They inherit the
   lesson's own access rule via `can_access_lesson()`.
@@ -87,6 +91,14 @@ security, so hiding a column is not something a policy can express. Instead:
 Passing is what completes a quiz lesson — there is no "mark complete" button —
 so a quiz genuinely gates the next lesson under sequential unlock. Retakes are
 unlimited; every attempt is kept.
+
+Two consequences of keeping attempts follow from that. Each attempt stores the
+`pass_mark` it was graded against, so moving a lesson's threshold later cannot
+make an old result claim it needed a mark it never did. And retiring a question
+sets `archived_at` rather than deleting it: a delete would cascade its
+`quiz_answers` away while the attempt's stored score still counted them.
+Archived questions disappear from the player and from future grading; past
+results keep them.
 
 ## Data model
 
