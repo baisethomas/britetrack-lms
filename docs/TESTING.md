@@ -120,6 +120,16 @@ expect(result.ok && result.rows.length > 0).toBe(false);
   is not writable by students, and is cleared when a lesson is added.
 - **Visibility** — drafts, live-session Zoom links, notifications, and
   parent-student links are each readable only by the right parties.
+- **Quiz answer keys** — `is_correct` is unreadable through every path a
+  student has: the sanitised views omit it, and the base tables yield no rows
+  to a student reading or writing them directly. Admin authoring is covered
+  too, as the positive counterpart — it runs under the same `authenticated`
+  role, so a lockdown that catches students must not catch admins. Grading,
+  recorded pass marks, archived questions, exact-match multi-choice, foreign
+  option ids, attempt forgery and review access are all covered. Completion is
+  covered from the other side too: a student cannot stamp a quiz lesson
+  complete through the generic `lesson_progress` path, by insert or by update,
+  while a non-quiz lesson still completes normally.
 
 Every negative test has a positive counterpart, so a blanket permission
 failure cannot make the suite pass vacuously.
@@ -130,4 +140,13 @@ Changes to authorization should be checked by weakening a policy and
 confirming the suite fails. For example, dropping `can_access_lesson` from the
 progress-insert policy must break *blocks completing a locked lesson*; relaxing
 the live-session policy to `auth.uid() is not null` must break *hides Zoom
-links from a signed-in user who is not enrolled*.
+links from a signed-in user who is not enrolled*; and relaxing the
+`admins read options` policy to `using (true)` must break both answer-key
+tests; and granting `authenticated` delete on `quiz_questions` must break
+*refuses even an admin's direct delete*.
+
+Assert on rows, not on error text. The answer-key tests originally expected
+`permission denied`, which made them sensitive to how access was refused rather
+than to whether the key leaked — a grant change flipped them while the key
+stayed safe. They now assert that no rows come back, which holds whichever
+layer does the refusing.

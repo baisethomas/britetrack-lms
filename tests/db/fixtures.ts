@@ -98,3 +98,70 @@ export async function completedAt(
   );
   return row?.completed_at ?? null;
 }
+
+export interface SeededQuiz {
+  lessonId: string;
+  questionIds: string[];
+  /** Correct option ids, parallel to questionIds. */
+  correctIds: string[][];
+  /** Incorrect option ids, parallel to questionIds. */
+  wrongIds: string[][];
+}
+
+/**
+ * Add a quiz lesson to a course: `questionCount` single-choice questions,
+ * each with one correct option and two distractors.
+ */
+export async function seedQuizLesson(
+  db: TestDb,
+  courseId: string,
+  options: { questionCount?: number; passMark?: number; position?: number } = {},
+): Promise<SeededQuiz> {
+  const { questionCount = 2, passMark = 70, position = 99 } = options;
+
+  const [lesson] = await db.seed<{ id: string }>(
+    `insert into public.lessons
+       (course_id, title, content_type, position, pass_mark)
+     values ($1, 'Quiz', 'quiz', $2, $3) returning id`,
+    [courseId, position, passMark],
+  );
+
+  const questionIds: string[] = [];
+  const correctIds: string[][] = [];
+  const wrongIds: string[][] = [];
+
+  for (let q = 1; q <= questionCount; q += 1) {
+    const [question] = await db.seed<{ id: string }>(
+      `insert into public.quiz_questions (lesson_id, prompt, explanation, position)
+       values ($1, $2, 'Because.', $3) returning id`,
+      [lesson.id, `Question ${q}`, q],
+    );
+    questionIds.push(question.id);
+
+    const correct: string[] = [];
+    const wrong: string[] = [];
+    for (let o = 1; o <= 3; o += 1) {
+      const isCorrect = o === 1;
+      const [option] = await db.seed<{ id: string }>(
+        `insert into public.quiz_options (question_id, label, is_correct, position)
+         values ($1, $2, $3, $4) returning id`,
+        [question.id, `Option ${o}`, isCorrect, o],
+      );
+      (isCorrect ? correct : wrong).push(option.id);
+    }
+    correctIds.push(correct);
+    wrongIds.push(wrong);
+  }
+
+  return { lessonId: lesson.id, questionIds, correctIds, wrongIds };
+}
+
+/** Shape submit_quiz_attempt() expects. */
+export function answerPayload(
+  questionIds: string[],
+  chosen: string[][],
+): string {
+  return JSON.stringify(
+    questionIds.map((id, i) => ({ question_id: id, option_ids: chosen[i] ?? [] })),
+  );
+}

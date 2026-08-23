@@ -26,6 +26,21 @@ Supabase session; writes go through server actions. This removes an entire
 deployment, a second auth story, and all client-side data fetching for core
 pages.
 
+### Table privileges come from Supabase; RLS does the constraining
+
+A Supabase project ships `alter default privileges in schema public grant all
+on tables to anon, authenticated, service_role`, so every table these
+migrations create is already reachable by the API roles, and RLS is what
+decides which rows. That is why no table in the schema carries an explicit
+grant, and why the few `revoke` statements that do exist — on the quiz answer
+key and on `lesson_catalog` for `anon` — are meaningful: they take away
+something the platform already gave.
+
+The assumption is load-bearing for the whole schema, not for quizzes
+specifically. On a plain Postgres without those default privileges nothing in
+the app would be readable, which is what `tests/db/shim/02-supabase-post.sql`
+reproduces before the suite runs.
+
 ### Postgres RLS is the authorization layer
 
 Every table has row-level security; policies encode the role model
@@ -62,6 +77,75 @@ reset by cron.
 Bulk enrollment, previously an edge-function stub, is an in-app admin form —
 it needs the admin's session and RLS, not the service role.
 
+## Quizzes: the answer key never leaves the database
+
+A quiz lesson has questions and options, and the load-bearing requirement is
+that a student cannot discover which option is correct. RLS has no column-level
+security, so hiding a column is not something a policy can express. Instead:
+
+- `quiz_questions` and `quiz_options` are **admin-only through RLS**, and
+  `REVOKE`d from `anon` outright. They cannot be revoked from `authenticated`:
+  Supabase runs every signed-in caller under that one role, so admins author
+  through it too, and a blanket revoke denies them before any policy is
+  evaluated. The admin-only policies are what exclude students, who match no
+  policy and so read no rows.
+- Students read `quiz_question_prompts` and `quiz_option_choices`, views that
+  simply do not contain `is_correct` or `explanation`. They inherit the
+  lesson's own access rule via `can_access_lesson()`.
+- Grading happens in `submit_quiz_attempt()`, a `SECURITY DEFINER` function —
+  the only thing permitted to read the key. It re-checks lesson access itself
+  rather than trusting the caller, discards option ids that belong to another
+  question, and scores all-or-nothing per question.
+- `quiz_attempts` has **no student INSERT or UPDATE policy**. Scores exist only
+  because the grading function produced them, so a pass cannot be forged the
+  way a hand-written row could be.
+- `quiz_attempt_review()` returns the key and explanations, but only for an
+  attempt that is already submitted and only to its owner, their linked
+  parents, or an admin.
+
+The guarantee is therefore about a quiz *in progress*: nothing a student can
+read while answering reveals the key. Review deliberately reveals it
+afterwards, which is what makes a wrong answer worth anything pedagogically.
+Combined with unlimited retakes that means a determined student can submit an
+empty attempt, read the answers, and retake to pass — so a quiz here is a
+learning checkpoint, not an invigilated exam. Unlimited retakes alone already
+imply that: all-or-nothing scoring and no attempt limit means enough tries
+eventually pass. If a quiz ever needs to gate something that matters, the
+lever is attempt limits or withholding review until a pass, not tightening the
+answer-key path.
+
+Passing is what completes a quiz lesson — there is no "mark complete" button —
+so a quiz genuinely gates the next lesson under sequential unlock. That claim
+has to hold in the database or it holds nowhere: the generic `lesson_progress`
+policies gate writes on `can_access_lesson()` alone, so a student who had
+merely *reached* an unlocked quiz could otherwise stamp it complete and walk
+into the next lesson. The student write policies now refuse a completion stamp
+on a quiz lesson outright. Starting one still records progress; only the
+completion is withheld, and `submit_quiz_attempt()` — running as definer —
+remains the one path that can grant it. Retakes are
+unlimited; every attempt is kept.
+
+Two consequences of keeping attempts follow from that. Each attempt stores the
+`pass_mark` it was graded against, so moving a lesson's threshold later cannot
+make an old result claim it needed a mark it never did. And retiring a question
+sets `archived_at` rather than deleting it: a delete would cascade its
+`quiz_answers` away while the attempt's stored score still counted them.
+Archived questions disappear from the player and from future grading; past
+results keep them. The database enforces that rather than trusting the UI to:
+there is no DELETE policy on `quiz_questions` or `quiz_options` and no delete
+grant, so retirement through `archived_at` is the only route an admin has. A
+retention guarantee the database does not enforce is only a comment. `quiz_attempt_review()` therefore returns option *labels*
+alongside their ids: the student-facing views no longer carry an archived
+question's options, so a review that resolved ids against the live quiz would
+render a retired answer blank.
+
+Authoring a question is a single `create_quiz_question()` call rather than two
+writes, because a question that committed without its options would be shown to
+students with nothing to choose. Its validation — two options, at least one
+correct, exactly one for single-choice — lives in the function so it binds any
+caller, not only the form. Grading also skips a question that has no options at
+all, so a half-authored one cannot silently make a pass unreachable.
+
 ## Data model
 
 ```
@@ -73,7 +157,13 @@ enrollments (course_id, student_id, completed_at)
 lesson_progress (lesson_id, student_id, started_at, completed_at)
 live_sessions (course_id, zoom_meeting_id, join_url, recording_url)
 notifications (user_id, type, read_at)
+quiz_questions (lesson_id, prompt, explanation, kind, points, position)
+quiz_options (question_id, label, is_correct, position)
+quiz_attempts (lesson_id, student_id, score, max_score, passed, submitted_at)
+quiz_answers (attempt_id, question_id, selected_option_ids, is_correct)
 ```
+
+`lessons.pass_mark` is the percent of available points a quiz lesson requires.
 
 `enrollments.completed_at` is derived by a database trigger
 (`sync_enrollment_completion`) when the last lesson of a course is completed —

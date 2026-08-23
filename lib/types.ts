@@ -41,6 +41,8 @@ export interface Lesson {
   video_url: string | null;
   duration_minutes: number;
   position: number;
+  /** Percent needed to pass, for quiz lessons. */
+  pass_mark: number;
   created_at: string;
   updated_at: string;
 }
@@ -88,4 +90,56 @@ export interface Notification {
   href: string | null;
   read_at: string | null;
   created_at: string;
+}
+
+export type QuizQuestionKind = "single_choice" | "multi_choice";
+
+/** A question as the student sees it — no answer key, no explanation. */
+export interface QuizQuestionPrompt {
+  id: string;
+  lesson_id: string;
+  prompt: string;
+  kind: QuizQuestionKind;
+  points: number;
+  position: number;
+}
+
+/** An option as the student sees it — no is_correct. */
+export interface QuizOptionChoice {
+  id: string;
+  question_id: string;
+  label: string;
+  position: number;
+}
+
+export interface QuizQuestion extends QuizQuestionPrompt {
+  options: QuizOptionChoice[];
+}
+
+export interface QuizAttempt {
+  id: string;
+  lesson_id: string;
+  student_id: string;
+  started_at: string;
+  submitted_at: string | null;
+  score: number | null;
+  max_score: number | null;
+  /** The threshold applied when this attempt was graded. */
+  pass_mark: number | null;
+  passed: boolean | null;
+}
+
+/** One row of quiz_attempt_review() — only available once graded. */
+export interface QuizReviewRow {
+  question_id: string;
+  prompt: string;
+  explanation: string;
+  points: number;
+  question_position: number;
+  is_correct: boolean;
+  selected_option_ids: string[];
+  correct_option_ids: string[];
+  /** Labels carried with the review, so an archived question still reads. */
+  selected_labels: string[];
+  correct_labels: string[];
 }

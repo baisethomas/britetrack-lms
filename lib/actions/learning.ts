@@ -47,6 +47,19 @@ export async function completeLesson(
   } = await supabase.auth.getUser();
   if (!user) redirect("/login");
 
+  const { data: lesson } = await supabase
+    .from("lessons")
+    .select("content_type, position")
+    .eq("id", lessonId)
+    .single();
+
+  // Quiz lessons are completed by passing, never by asking. RLS refuses this
+  // outright; failing here keeps the error legible instead of surfacing a
+  // policy violation.
+  if (lesson?.content_type === "quiz") {
+    throw new Error("Quiz lessons are completed by passing the quiz");
+  }
+
   // RLS (can_access_lesson) rejects locked or un-enrolled lessons; the
   // sync_enrollment_completion trigger stamps course completion.
   const { error } = await supabase.from("lesson_progress").upsert(
@@ -63,11 +76,6 @@ export async function completeLesson(
   revalidatePath("/dashboard");
 
   // Continue straight to the next lesson, or back to the course when done.
-  const { data: lesson } = await supabase
-    .from("lessons")
-    .select("position")
-    .eq("id", lessonId)
-    .single();
   const { data: next } = await supabase
     .from("lessons")
     .select("id")

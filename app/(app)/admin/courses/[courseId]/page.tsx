@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { Trash2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
@@ -94,9 +95,12 @@ export default async function AdminCourseDetailPage({
                 className="flex items-center justify-between gap-3 px-5 py-3"
               >
                 <div className="min-w-0">
-                  <div className="truncate text-sm font-medium">
+                  <Link
+                    href={`/admin/lessons/${lesson.id}`}
+                    className="truncate text-sm font-medium hover:text-ink-accent hover:underline"
+                  >
                     {lesson.position}. {lesson.title}
-                  </div>
+                  </Link>
                   <div className="mt-0.5 text-xs text-muted capitalize">
                     {lesson.content_type.replace("_", " ")}
                     {lesson.duration_minutes ? ` · ${lesson.duration_minutes} min` : ""}
