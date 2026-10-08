@@ -4,60 +4,76 @@ import {
   formatDuration,
   completionPercent,
   computeStreak,
-  deriveLessonState,
+  deriveOutlineState,
   normalisePassMark,
 } from "@/lib/progress";
 
-const lessons = [
-  { id: "a", position: 1 },
-  { id: "b", position: 2 },
-  { id: "c", position: 3 },
+const modules: Parameters<typeof deriveOutlineState>[0] = [
+  { id: "m1", position: 1, unlock_mode: "sequential", prerequisite_module_id: null, published: true },
 ];
+const items = [
+  { id: "a", module_id: "m1", position: 1, required: true, published: true },
+  { id: "b", module_id: "m1", position: 2, required: true, published: true },
+  { id: "c", module_id: "m1", position: 3, required: true, published: true },
+];
+const lockedOf = (done: string[], mods = modules, its = items) =>
+  deriveOutlineState(mods, its, new Set(done)).items
+    .sort((x, y) => x.position - y.position)
+    .map((i) => i.locked);
 
-describe("deriveLessonState", () => {
-  it("opens only the first lesson when nothing is complete", () => {
-    const state = deriveLessonState(lessons, new Set(), true);
-    expect(state.map((l) => l.locked)).toEqual([false, true, true]);
-    expect(state.every((l) => !l.completed)).toBe(true);
+describe("deriveOutlineState", () => {
+  it("opens only the first item when nothing is complete", () => {
+    expect(lockedOf([])).toEqual([false, true, true]);
   });
 
-  it("unlocks the lesson after each completion", () => {
-    const state = deriveLessonState(lessons, new Set(["a"]), true);
-    expect(state.map((l) => l.locked)).toEqual([false, false, true]);
-    expect(state.map((l) => l.completed)).toEqual([true, false, false]);
+  it("unlocks the item after each completion", () => {
+    expect(lockedOf(["a"])).toEqual([false, false, true]);
   });
 
-  it("locks nothing once every lesson is complete", () => {
-    const state = deriveLessonState(lessons, new Set(["a", "b", "c"]), true);
-    expect(state.every((l) => !l.locked)).toBe(true);
+  it("locks nothing once every item is complete", () => {
+    expect(lockedOf(["a", "b", "c"])).toEqual([false, false, false]);
   });
 
-  it("never locks an already-completed lesson, even out of order", () => {
-    // Defensive: the database now prevents out-of-order completions, but the
-    // derivation must not hide work a learner has genuinely finished.
-    const state = deriveLessonState(lessons, new Set(["c"]), true);
-    expect(state[2]).toMatchObject({ id: "c", completed: true, locked: false });
+  it("never locks an already-completed item, even out of order", () => {
+    // The database prevents out-of-order completions; the derivation must
+    // still never hide work a learner has genuinely finished.
+    const state = deriveOutlineState(modules, items, new Set(["c"])).items;
+    expect(state.find((i) => i.id === "c")).toMatchObject({ completed: true, locked: false });
   });
 
-  it("resumes locking after an out-of-order completion", () => {
-    const state = deriveLessonState(lessons, new Set(["b"]), true);
-    // "a" is open (first), "b" is complete, "c" follows a completed lesson.
-    expect(state.map((l) => l.locked)).toEqual([false, false, false]);
+  it("lets an optional item be skipped without gating what follows", () => {
+    const withOptional = items.map((i) => (i.id === "b" ? { ...i, required: false } : i));
+    expect(lockedOf(["a"], modules, withOptional)).toEqual([false, false, false]);
   });
 
-  it("locks nothing when the course does not unlock sequentially", () => {
-    const state = deriveLessonState(lessons, new Set(), false);
-    expect(state.every((l) => !l.locked)).toBe(true);
+  it("opens everything in a free module", () => {
+    const free = [{ ...modules[0], unlock_mode: "free" as const }];
+    expect(lockedOf([], free)).toEqual([false, false, false]);
   });
 
-  it("preserves the source lesson fields", () => {
-    const rich = [{ id: "a", position: 1, title: "Intro", duration: 5 }];
-    const [state] = deriveLessonState(rich, new Set(), true);
-    expect(state).toMatchObject({ id: "a", title: "Intro", duration: 5 });
+  it("locks every item of an unreachable or unpublished module", () => {
+    const two = [
+      ...modules,
+      { id: "m2", position: 2, unlock_mode: "free" as const, prerequisite_module_id: "m1", published: true },
+    ];
+    const gated = [...items, { id: "d", module_id: "m2", position: 1, required: true, published: true }];
+    const before = deriveOutlineState(two, gated, new Set()).items;
+    expect(before.find((i) => i.id === "d")?.locked).toBe(true);
+    const after = deriveOutlineState(two, gated, new Set(["a", "b", "c"])).items;
+    expect(after.find((i) => i.id === "d")?.locked).toBe(false);
+
+    const draft = [{ ...modules[0], published: false }];
+    expect(lockedOf([], draft)).toEqual([true, true, true]);
   });
 
-  it("handles an empty course", () => {
-    expect(deriveLessonState([], new Set(), true)).toEqual([]);
+  it("reports module completion from required published items only", () => {
+    const mixed = items.map((i) => (i.id === "c" ? { ...i, published: false } : i));
+    const state = deriveOutlineState(modules, mixed, new Set(["a", "b"]));
+    expect(state.modules[0].completed).toBe(true);
+  });
+
+  it("handles an empty section", () => {
+    expect(deriveOutlineState([], [], new Set())).toEqual({ modules: [], items: [] });
   });
 });
 

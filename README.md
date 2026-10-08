@@ -1,77 +1,83 @@
 # BriteTrack LMS
 
-A learning management system for programs where **students** take structured
-courses, **parents** follow their children's progress, and **admins** manage
-content and people.
+A K-12 learning management system built to compete with Canvas, Schoology and
+the platforms inside online programs like K12/Stride. Sold to schools first,
+then to districts. Designed to be easy for a kindergartener, legible to a
+parent, and fast for a teacher.
 
-Built as a single [Next.js](https://nextjs.org) App Router application on
-[Supabase](https://supabase.com) (Postgres, Auth, RLS, Edge Functions), styled
-with Tailwind CSS v4.
+One [Next.js](https://nextjs.org) App Router application on
+[Supabase](https://supabase.com) (Postgres, Auth, row-level security, edge
+functions), styled with Tailwind CSS v4.
 
-## Features
+## What it does today
 
-- **Role-based experience** — student, parent, and admin each get their own
-  dashboard and navigation from one codebase.
-- **Guided learning** — courses can unlock lessons sequentially, so the next
-  step is always obvious. A "Continue learning" card resumes the current course
-  at the first incomplete lesson.
-- **Visible progress** — progress rings, per-course bars, and a Duolingo-style
-  daily streak computed from lesson completions.
-- **Focused course player** — lesson content (video/article/quiz/live session)
-  with a curriculum rail, previous/next navigation, and one-tap "mark complete
-  & continue".
-- **Parents as first-class users** — linked to students by an admin; they see
-  course progress and streaks, never credentials.
-- **Admin tooling** — course/lesson authoring with draft → publish → archive
-  lifecycle, user role management, bulk enrollment by pasted email list, and an
-  overview dashboard (students, courses, enrollments, completion rate).
-- **Quizzes** — single-answer and select-all questions with a per-lesson pass
-  mark. Graded entirely in the database, so the answer key never reaches the
-  browser while a quiz is being taken; correct answers and explanations appear
-  only in the review of an attempt already submitted. Passing is what completes
-  the lesson, and retakes are unlimited.
-- **Live sessions** — Zoom meetings attached to courses; a webhook edge
-  function verifies Zoom's HMAC signature and stores recording links
-  automatically.
-- **Notifications** — in-app notification center plus an edge function that
-  fans out email via Resend.
+- **Schools as tenants.** An organization (a district, or a single
+  independent school) owns schools; schools own terms and grading periods.
+  Nothing crosses a school boundary.
+- **Roles per school.** A person is an admin, teacher, student, guardian or
+  staff member *at a school*, and can hold different roles at different
+  schools. Signup never asks for a role; admins invite people by email and the
+  invitation sets up the student record (with grade level) or the guardian
+  link.
+- **Courses and class sections.** A course is catalogue content; a section is
+  a class of it in a term with its own roster. Teachers own their sections and
+  nobody else's.
+- **Modules and items.** Content is organised in units of pages, videos,
+  quizzes, live sessions and links. Units unlock freely or in order and can
+  require a prerequisite unit; items can be optional.
+- **Quizzes graded in the database.** The answer key never reaches the
+  browser while a quiz is open; passing is what completes the item.
+- **Live classes.** Bring-your-own Zoom or Google Meet links on a section
+  with one-tap join; Zoom recordings land on the session automatically.
+- **Four dashboards.** Admin (setup checklist, people, catalogue), teacher
+  (today's classes, rosters, building), student (what's next, streak, live
+  classes) and guardian (every child, every class, what's coming up).
+- **Authorization in Postgres.** Fifty RLS policies and a database test suite
+  that proves each one against a real Postgres.
 
-## Architecture
+The phased plan from here (gradebook, attendance, OneRoster/LTI, an embedded
+classroom) is in [`docs/ROADMAP.md`](docs/ROADMAP.md).
+
+## Layout
 
 ```
-app/                  Next.js App Router
-  (auth)/             login, signup, onboarding
-  (app)/              authenticated shell (sidebar, role-aware nav)
-    dashboard/        student / parent / admin dashboards
-    courses/          catalog, course detail, lesson player
-    admin/            course authoring, users, bulk enrollment
+app/
+  (auth)/             login, signup, onboarding (found a school / accept an invitation)
+  join/[token]        invitation landing
+  (app)/              authenticated shell: school picker, role-aware nav
+    dashboard/        admin | teacher | student | guardian
+    classes/          my sections → section → items (player, quiz, editor, build)
+    children/         guardian view
+    admin/            school & terms, course catalogue, people & invitations
 lib/
-  supabase/           browser/server/middleware clients (@supabase/ssr)
-  actions/            server actions (auth, learning, admin)
-  data.ts             shared server-side queries (progress, streaks, unlocking)
-components/           UI primitives and shell
+  data.ts             getContext(), outlines, rosters, sessions, children
+  progress.ts         unlock derivation (mirrors the database), streaks
+  actions/            auth, onboarding, school, sections, learning, quiz
+  supabase/           browser / server / middleware clients
+components/           UI primitives, shell, outline, session list
 supabase/
-  migrations/         schema + RLS policies (source of truth for access control)
-  functions/          Deno edge functions (Zoom webhooks, notification emails)
+  migrations/         00001_baseline.sql — the schema and every policy
+  functions/          Zoom recording webhook, notification emails
+tests/
+  unit/               pure logic
+  db/                 RLS, triggers and RPCs against real Postgres
 ```
 
-There is **no separate API server**: authorization lives in Postgres RLS
-policies, reads happen in server components, and writes go through server
-actions. See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the reasoning
-and [`docs/UX_NOTES.md`](docs/UX_NOTES.md) for the design patterns the UI
-follows.
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for the reasoning,
+[`docs/TESTING.md`](docs/TESTING.md) for the database suite, and
+[`docs/UX_NOTES.md`](docs/UX_NOTES.md) for the design patterns.
 
 ## Getting started
 
-1. Create a Supabase project and apply the migration:
+1. Create a Supabase project and apply the baseline:
 
    ```bash
    npx supabase link --project-ref <your-project-ref>
    npx supabase db push
    ```
 
-2. Configure environment variables (copy `.env.example` to `.env.local` and
-   fill in your Supabase URL + anon key).
+2. Copy `.env.example` to `.env.local` and fill in the Supabase URL and anon
+   key.
 
 3. Install and run:
 
@@ -80,9 +86,10 @@ follows.
    npm run dev
    ```
 
-4. Sign up as a student, then promote your account to admin once
-   (`update profiles set role = 'admin' where id = '<your-user-id>';` in the
-   SQL editor). Admins can manage every other role from the UI.
+4. Sign up, then on the onboarding screen **found your school**. That makes
+   you its administrator. Invite a teacher, a student and a guardian from
+   **People**; each invitation produces a `/join/<token>` link bound to that
+   email address (email delivery is a later phase; copy the link for now).
 
 ### Edge functions
 
@@ -98,14 +105,15 @@ npx supabase secrets set RESEND_API_KEY=... ZOOM_WEBHOOK_SECRET_TOKEN=...
 - `npm run lint` — ESLint (flat config, Next presets)
 - `npm run typecheck` — strict TypeScript
 - `npm run build` — production build
-- `npm run test:unit` — pure logic (progress, streaks, redirect validation)
+- `npm run test:unit` — pure logic
 - `npm run test:db` — every RLS policy against a real Postgres
-  (`npm run db:test:up` first)
+  (`npm run db:test:up` first, or point `DATABASE_URL` at any disposable
+  Postgres 16 whose name contains the word `test`)
+- `npm test` — both
 
 Because authorization lives in Postgres rather than in application code, the
-database suite is the one that matters most — see
-[`docs/TESTING.md`](docs/TESTING.md).
+database suite is the one that matters most.
 
-CI (`.github/workflows/ci.yml`) runs lint, typecheck, unit tests, and the
-build on every push and PR, plus the RLS suite against a Postgres service
-container. Deploys are handled by Vercel's git integration.
+CI (`.github/workflows/ci.yml`) runs lint, typecheck, unit tests and the build
+on every push and pull request, plus the database suite against a Postgres
+service container.

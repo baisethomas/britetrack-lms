@@ -1,200 +1,135 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { connect, disconnect, withRollback } from "./harness";
-import { completedAt, completeLesson, enroll, seedCourse } from "./fixtures";
+import {
+  addMember,
+  completeItem,
+  completedAt,
+  enrollStudent,
+  seedClassroom,
+  seedItem,
+} from "./fixtures";
 
 beforeAll(connect);
 afterAll(disconnect);
 
-describe("derived course completion", () => {
-  it("leaves completed_at null while lessons remain", async () => {
+describe("derived section completion", () => {
+  it("leaves completed_at null while required items remain", async () => {
     await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId, lessonIds } = await seedCourse(db, { lessonCount: 3 });
-      await enroll(db, courseId, student);
-
-      await completeLesson(db, lessonIds[0], student);
-      expect(await completedAt(db, courseId, student)).toBeNull();
-
-      await completeLesson(db, lessonIds[1], student);
-      expect(await completedAt(db, courseId, student)).toBeNull();
+      const { student, sectionId, itemIds } = await seedClassroom(db);
+      await completeItem(db, itemIds[0], student);
+      await completeItem(db, itemIds[1], student);
+      expect(await completedAt(db, sectionId, student)).toBeNull();
     });
   });
 
-  it("stamps completed_at when the final lesson is completed", async () => {
+  it("stamps completed_at when the last required item is completed", async () => {
     await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId, lessonIds } = await seedCourse(db, { lessonCount: 3 });
-      await enroll(db, courseId, student);
+      const { student, sectionId, itemIds } = await seedClassroom(db);
+      for (const id of itemIds) await completeItem(db, id, student);
+      expect(await completedAt(db, sectionId, student)).not.toBeNull();
+    });
+  });
 
-      for (const lessonId of lessonIds) {
-        await completeLesson(db, lessonId, student);
-      }
-      expect(await completedAt(db, courseId, student)).not.toBeNull();
+  it("ignores optional items", async () => {
+    await withRollback(async (db) => {
+      const { student, sectionId, moduleId, itemIds } = await seedClassroom(db);
+      await seedItem(db, moduleId, { position: 9, required: false });
+      for (const id of itemIds) await completeItem(db, id, student);
+      expect(await completedAt(db, sectionId, student)).not.toBeNull();
     });
   });
 
   it("clears completed_at when progress is withdrawn", async () => {
     await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId, lessonIds } = await seedCourse(db, { lessonCount: 2 });
-      await enroll(db, courseId, student);
-      for (const lessonId of lessonIds) await completeLesson(db, lessonId, student);
-      expect(await completedAt(db, courseId, student)).not.toBeNull();
-
-      await db.seed("delete from public.lesson_progress where lesson_id = $1", [
-        lessonIds[1],
+      const { student, sectionId, itemIds } = await seedClassroom(db);
+      for (const id of itemIds) await completeItem(db, id, student);
+      await db.seed("delete from public.module_item_progress where item_id = $1 and student_id = $2", [
+        itemIds[2],
+        student,
       ]);
-      expect(await completedAt(db, courseId, student)).toBeNull();
+      expect(await completedAt(db, sectionId, student)).toBeNull();
     });
   });
 
-  it("does not affect another student's enrollment", async () => {
+  it("does not affect a classmate's enrollment", async () => {
     await withRollback(async (db) => {
-      const finisher = await db.createUser({ email: "f@example.com", role: "student" });
-      const starter = await db.createUser({ email: "b@example.com", role: "student" });
-      const { courseId, lessonIds } = await seedCourse(db, { lessonCount: 2 });
-      await enroll(db, courseId, finisher);
-      await enroll(db, courseId, starter);
-
-      for (const lessonId of lessonIds) await completeLesson(db, lessonId, finisher);
-
-      expect(await completedAt(db, courseId, finisher)).not.toBeNull();
-      expect(await completedAt(db, courseId, starter)).toBeNull();
+      const { student, schoolId, sectionId, itemIds } = await seedClassroom(db);
+      const mate = await db.createUser({ email: "mate@s1.test" });
+      await addMember(db, schoolId, mate, "student");
+      await enrollStudent(db, sectionId, mate);
+      for (const id of itemIds) await completeItem(db, id, student);
+      expect(await completedAt(db, sectionId, student)).not.toBeNull();
+      expect(await completedAt(db, sectionId, mate)).toBeNull();
     });
   });
 
-  it("reopens finished enrollments when a lesson is added to the course", async () => {
+  it("reopens a finished enrollment when a required item is added", async () => {
     await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId, lessonIds } = await seedCourse(db, { lessonCount: 2 });
-      await enroll(db, courseId, student);
-      for (const lessonId of lessonIds) await completeLesson(db, lessonId, student);
-      expect(await completedAt(db, courseId, student)).not.toBeNull();
-
-      await db.seed(
-        `insert into public.lessons (course_id, title, content, position)
-         values ($1, 'Bonus lesson', 'more', 3)`,
-        [courseId],
-      );
-      expect(await completedAt(db, courseId, student)).toBeNull();
+      const { student, sectionId, moduleId, itemIds } = await seedClassroom(db);
+      for (const id of itemIds) await completeItem(db, id, student);
+      expect(await completedAt(db, sectionId, student)).not.toBeNull();
+      await seedItem(db, moduleId, { position: 9 });
+      expect(await completedAt(db, sectionId, student)).toBeNull();
     });
   });
 
-  it("does not touch enrollments of unrelated courses when a lesson is added", async () => {
+  it("does not reopen it for an optional or unpublished item", async () => {
     await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const finished = await seedCourse(db, { lessonCount: 1, title: "Finished" });
-      const other = await seedCourse(db, { lessonCount: 1, title: "Other" });
-      await enroll(db, finished.courseId, student);
-      await enroll(db, other.courseId, student);
-      await completeLesson(db, finished.lessonIds[0], student);
-
-      await db.seed(
-        `insert into public.lessons (course_id, title, content, position)
-         values ($1, 'Extra', 'x', 2)`,
-        [other.courseId],
-      );
-      expect(await completedAt(db, finished.courseId, student)).not.toBeNull();
+      const { student, sectionId, moduleId, itemIds } = await seedClassroom(db);
+      for (const id of itemIds) await completeItem(db, id, student);
+      await seedItem(db, moduleId, { position: 8, required: false });
+      await seedItem(db, moduleId, { position: 9, published: false });
+      expect(await completedAt(db, sectionId, student)).not.toBeNull();
     });
   });
 });
 
-describe("enrollment integrity", () => {
-  it("stops a student from stamping their own completion", async () => {
-    // completed_at drives the admin completion-rate stat, so it must not be
-    // writable from a browser session.
+describe("completion cannot be written by hand", () => {
+  it("ignores a completion stamp from a student, a teacher or an admin", async () => {
+    // Even the roles allowed to update enrollments do not get to decide this
+    // column; the trigger derives it and the guard keeps everyone else out.
     await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId } = await seedCourse(db, { lessonCount: 3 });
-      await enroll(db, courseId, student);
+      const { student, teacher, admin, sectionId } = await seedClassroom(db);
 
-      const result = await db.asUser(student, (q) =>
+      for (const who of [teacher, admin]) {
+        const result = await db.asUser(who, (q) =>
+          q.attempt(
+            `update public.section_enrollments set completed_at = now()
+             where section_id = $1 and profile_id = $2 returning completed_at`,
+            [sectionId, student],
+          ),
+        );
+        // The update may succeed, but the stamp does not take.
+        expect(result.ok ? result.rows[0] : { completed_at: null }).toMatchObject({
+          completed_at: null,
+        });
+      }
+
+      const byStudent = await db.asUser(student, (q) =>
         q.attempt(
-          `update public.enrollments set completed_at = now()
-           where course_id = $1 and student_id = $2 returning id`,
-          [courseId, student],
+          `update public.section_enrollments set completed_at = now()
+           where section_id = $1 and profile_id = $2 returning id`,
+          [sectionId, student],
         ),
       );
-      expect(result.ok && result.rows.length > 0).toBe(false);
-      expect(await completedAt(db, courseId, student)).toBeNull();
+      expect(byStudent.ok && byStudent.rows.length > 0).toBe(false);
+      expect(await completedAt(db, sectionId, student)).toBeNull();
     });
   });
 
-  it("lets a student enroll themselves in a published course", async () => {
+  it("drops a completion stamp supplied on insert", async () => {
     await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId } = await seedCourse(db);
-
-      const result = await db.asUser(student, (q) =>
-        q.attempt(
-          "insert into public.enrollments (course_id, student_id) values ($1, $2) returning id",
-          [courseId, student],
+      const { admin, schoolId, sectionId } = await seedClassroom(db);
+      const kid = await db.createUser({ email: "kid2@s1.test" });
+      await addMember(db, schoolId, kid, "student");
+      const [row] = await db.asUser(admin, (q) =>
+        q.run<{ completed_at: string | null }>(
+          `insert into public.section_enrollments (section_id, profile_id, role, completed_at)
+           values ($1, $2, 'student', now()) returning completed_at`,
+          [sectionId, kid],
         ),
       );
-      expect(result.ok).toBe(true);
-    });
-  });
-
-  it("blocks enrolling in an unpublished course", async () => {
-    await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId } = await seedCourse(db, { status: "draft" });
-
-      const result = await db.asUser(student, (q) =>
-        q.attempt(
-          "insert into public.enrollments (course_id, student_id) values ($1, $2)",
-          [courseId, student],
-        ),
-      );
-      expect(result.ok).toBe(false);
-    });
-  });
-
-  it("blocks enrolling somebody else", async () => {
-    await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const victim = await db.createUser({ email: "v@example.com", role: "student" });
-      const { courseId } = await seedCourse(db);
-
-      const result = await db.asUser(student, (q) =>
-        q.attempt(
-          "insert into public.enrollments (course_id, student_id) values ($1, $2)",
-          [courseId, victim],
-        ),
-      );
-      expect(result.ok).toBe(false);
-    });
-  });
-
-  it("blocks a parent from enrolling themselves", async () => {
-    await withRollback(async (db) => {
-      const parent = await db.createUser({ email: "p@example.com", role: "parent" });
-      const { courseId } = await seedCourse(db);
-
-      const result = await db.asUser(parent, (q) =>
-        q.attempt(
-          "insert into public.enrollments (course_id, student_id) values ($1, $2)",
-          [courseId, parent],
-        ),
-      );
-      expect(result.ok).toBe(false);
-    });
-  });
-
-  it("lets an admin enroll any student", async () => {
-    await withRollback(async (db) => {
-      const admin = await db.createUser({ email: "admin@example.com" });
-      await db.setRole(admin, "admin");
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId } = await seedCourse(db, { status: "draft" });
-
-      const result = await db.asUser(admin, (q) =>
-        q.attempt(
-          "insert into public.enrollments (course_id, student_id) values ($1, $2) returning id",
-          [courseId, student],
-        ),
-      );
-      expect(result.ok).toBe(true);
+      expect(row.completed_at).toBeNull();
     });
   });
 });

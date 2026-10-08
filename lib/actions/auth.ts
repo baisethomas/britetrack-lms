@@ -13,7 +13,6 @@ const credentialsSchema = z.object({
 
 const signupSchema = credentialsSchema.extend({
   fullName: z.string().min(1, "Enter your name"),
-  role: z.enum(["student", "parent"]),
 });
 
 export interface AuthFormState {
@@ -28,9 +27,7 @@ export async function signIn(
     email: formData.get("email"),
     password: formData.get("password"),
   });
-  if (!parsed.success) {
-    return { error: parsed.error.issues[0].message };
-  }
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   const supabase = await createClient();
   const { error } = await supabase.auth.signInWithPassword(parsed.data);
@@ -40,6 +37,10 @@ export async function signIn(
   redirect(safeRedirectPath(formData.get("next")));
 }
 
+/**
+ * Signup creates an identity and nothing else. A role comes from founding a
+ * school or accepting an invitation, so there is no role to choose here.
+ */
 export async function signUp(
   _prev: AuthFormState,
   formData: FormData,
@@ -48,36 +49,19 @@ export async function signUp(
     email: formData.get("email"),
     password: formData.get("password"),
     fullName: formData.get("fullName"),
-    role: formData.get("role"),
   });
-  if (!parsed.success) {
-    return { error: parsed.error.issues[0].message };
-  }
+  if (!parsed.success) return { error: parsed.error.issues[0].message };
 
   const supabase = await createClient();
   const { error } = await supabase.auth.signUp({
     email: parsed.data.email,
     password: parsed.data.password,
-    options: {
-      data: { full_name: parsed.data.fullName, role: parsed.data.role },
-    },
+    options: { data: { full_name: parsed.data.fullName } },
   });
   if (error) return { error: error.message };
 
   revalidatePath("/", "layout");
-  redirect("/onboarding");
-}
-
-export async function completeOnboarding(): Promise<void> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  await supabase.from("profiles").update({ onboarded: true }).eq("id", user.id);
-  revalidatePath("/", "layout");
-  redirect("/dashboard");
+  redirect(safeRedirectPath(formData.get("next"), "/onboarding"));
 }
 
 export async function signOut(): Promise<void> {

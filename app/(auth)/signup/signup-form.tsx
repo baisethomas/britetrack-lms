@@ -1,60 +1,28 @@
 "use client";
 
 import Link from "next/link";
-import { useActionState, useState } from "react";
-import { GraduationCap, Users } from "lucide-react";
+import { useActionState } from "react";
 import { signUp, type AuthFormState } from "@/lib/actions/auth";
 import { Button, Card, Input, Label } from "@/components/ui";
 
 const initialState: AuthFormState = { error: null };
 
-const roles = [
-  {
-    value: "student",
-    label: "I'm a student",
-    description: "Take courses and track my progress",
-    icon: GraduationCap,
-  },
-  {
-    value: "parent",
-    label: "I'm a parent",
-    description: "Follow my child's learning",
-    icon: Users,
-  },
-] as const;
-
-export function SignupForm() {
+/**
+ * No role picker: a role comes from founding a school or from an invitation,
+ * so signup only needs a name and credentials.
+ */
+export function SignupForm({ next }: { next?: string }) {
   const [state, action, pending] = useActionState(signUp, initialState);
-  const [role, setRole] = useState<"student" | "parent">("student");
+  const loginHref = next ? `/login?next=${encodeURIComponent(next)}` : "/login";
 
   return (
     <Card>
       <h1 className="text-title font-semibold">Create your account</h1>
       <p className="mt-1 text-sm text-muted">
-        Start with the role that fits you — admins are invited separately.
+        Then set up your school, or join one with the invitation you were sent.
       </p>
       <form action={action} className="mt-6 space-y-4">
-        <input type="hidden" name="role" value={role} />
-        <div className="grid grid-cols-2 gap-3" role="radiogroup" aria-label="Account type">
-          {roles.map((r) => (
-            <button
-              key={r.value}
-              type="button"
-              role="radio"
-              aria-checked={role === r.value}
-              onClick={() => setRole(r.value)}
-              className={`rounded-card border p-3 text-left transition-colors ${
-                role === r.value
-                  ? "border-accent bg-accent-soft ring-1 ring-accent"
-                  : "border-line hover:border-line"
-              }`}
-            >
-              <r.icon className="mb-2 size-5 text-accent" aria-hidden />
-              <div className="text-sm font-medium">{r.label}</div>
-              <div className="mt-0.5 text-xs text-muted">{r.description}</div>
-            </button>
-          ))}
-        </div>
+        {next && <input type="hidden" name="next" value={next} />}
         <div>
           <Label htmlFor="fullName">Full name</Label>
           <Input id="fullName" name="fullName" autoComplete="name" required />
@@ -86,7 +54,7 @@ export function SignupForm() {
       </form>
       <p className="mt-4 text-center text-sm text-muted">
         Already have an account?{" "}
-        <Link href="/login" className="font-medium text-accent hover:underline">
+        <Link href={loginHref} className="font-medium text-accent hover:underline">
           Sign in
         </Link>
       </p>

@@ -3,114 +3,58 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
+import { getSectionOutline, nextItem, requireSchool } from "@/lib/data";
 
-export async function enrollInCourse(courseId: string): Promise<void> {
+/** Record that the student opened an item. Idempotent; RLS gates access. */
+export async function startItem(itemId: string): Promise<void> {
+  const ctx = await requireSchool();
+  if (!ctx.isStudent) return;
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { error } = await supabase
-    .from("enrollments")
-    .insert({ course_id: courseId, student_id: user.id });
-  // Unique violation just means already enrolled — treat as success.
-  if (error && error.code !== "23505") throw new Error(error.message);
-
-  revalidatePath("/courses");
-  revalidatePath(`/courses/${courseId}`);
-  redirect(`/courses/${courseId}`);
-}
-
-export async function startLesson(lessonId: string): Promise<void> {
-  const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return;
-
   await supabase
-    .from("lesson_progress")
+    .from("module_item_progress")
     .upsert(
-      { lesson_id: lessonId, student_id: user.id },
-      { onConflict: "lesson_id,student_id", ignoreDuplicates: true },
+      { item_id: itemId, student_id: ctx.profile.id },
+      { onConflict: "item_id,student_id", ignoreDuplicates: true },
     );
 }
 
-export async function completeLesson(
-  lessonId: string,
-  courseId: string,
-): Promise<void> {
+/**
+ * Mark a page, video or link complete and move on. Quizzes are completed by
+ * passing, never by asking — RLS refuses this for them and the player never
+ * offers it.
+ */
+export async function completeItem(itemId: string, sectionId: string): Promise<void> {
+  const ctx = await requireSchool();
+  if (!ctx.isStudent) redirect(`/classes/${sectionId}`);
+
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) redirect("/login");
-
-  const { data: lesson } = await supabase
-    .from("lessons")
-    .select("content_type, position")
-    .eq("id", lessonId)
-    .single();
-
-  // Quiz lessons are completed by passing, never by asking. RLS refuses this
-  // outright; failing here keeps the error legible instead of surfacing a
-  // policy violation.
-  if (lesson?.content_type === "quiz") {
-    throw new Error("Quiz lessons are completed by passing the quiz");
-  }
-
-  // RLS (can_access_lesson) rejects locked or un-enrolled lessons; the
-  // sync_enrollment_completion trigger stamps course completion.
-  const { error } = await supabase.from("lesson_progress").upsert(
-    {
-      lesson_id: lessonId,
-      student_id: user.id,
-      completed_at: new Date().toISOString(),
-    },
-    { onConflict: "lesson_id,student_id" },
+  const { error } = await supabase.from("module_item_progress").upsert(
+    { item_id: itemId, student_id: ctx.profile.id, completed_at: new Date().toISOString() },
+    { onConflict: "item_id,student_id" },
   );
   if (error) throw new Error(error.message);
 
-  revalidatePath(`/courses/${courseId}`);
+  revalidatePath(`/classes/${sectionId}`);
   revalidatePath("/dashboard");
 
-  // Continue straight to the next lesson, or back to the course when done.
-  const { data: next } = await supabase
-    .from("lessons")
-    .select("id")
-    .eq("course_id", courseId)
-    .gt("position", lesson?.position ?? 0)
-    .order("position")
-    .limit(1)
-    .maybeSingle();
-
-  redirect(
-    next
-      ? `/courses/${courseId}/lessons/${next.id}`
-      : `/courses/${courseId}`,
-  );
+  const outline = await getSectionOutline(sectionId, ctx.profile.id);
+  const next = nextItem(outline);
+  redirect(next ? `/classes/${sectionId}/items/${next.id}` : `/classes/${sectionId}`);
 }
 
-export async function markNotificationRead(notificationId: string): Promise<void> {
+export async function markNotificationRead(id: string): Promise<void> {
   const supabase = await createClient();
-  await supabase
-    .from("notifications")
-    .update({ read_at: new Date().toISOString() })
-    .eq("id", notificationId);
+  await supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("id", id);
   revalidatePath("/notifications");
 }
 
 export async function markAllNotificationsRead(): Promise<void> {
+  const ctx = await requireSchool();
   const supabase = await createClient();
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
-  if (!user) return;
   await supabase
     .from("notifications")
     .update({ read_at: new Date().toISOString() })
-    .eq("user_id", user.id)
+    .eq("user_id", ctx.profile.id)
     .is("read_at", null);
   revalidatePath("/notifications");
 }

@@ -4,8 +4,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
-import { getProfile } from "@/lib/data";
+import { requireSchool } from "@/lib/data";
 import { normalisePassMark } from "@/lib/progress";
+import type { FormState } from "@/lib/actions/school";
 
 const answersSchema = z.array(
   z.object({
@@ -16,30 +17,28 @@ const answersSchema = z.array(
 
 /**
  * Grade a submission. All scoring happens inside submit_quiz_attempt(), which
- * re-checks lesson access itself — this action only shapes the payload.
+ * re-checks access itself. Errors are returned rather than thrown: a throw
+ * inside the player's transition stops the spinner with nothing shown.
  */
 export async function submitQuizAttempt(
-  lessonId: string,
-  courseId: string,
+  itemId: string,
+  sectionId: string,
   rawAnswers: unknown,
 ): Promise<{ error: string } | void> {
-  // Returned rather than thrown: a throw inside the player's transition stops
-  // the spinner with nothing shown, leaving the student unable to tell whether
-  // their answers were graded.
   const parsed = answersSchema.safeParse(rawAnswers);
   if (!parsed.success) return { error: "Those answers could not be read." };
 
   const supabase = await createClient();
   const { error } = await supabase.rpc("submit_quiz_attempt", {
-    p_lesson_id: lessonId,
+    p_item_id: itemId,
     p_answers: parsed.data,
   });
   if (error) return { error: error.message };
 
-  revalidatePath(`/courses/${courseId}/lessons/${lessonId}`);
-  revalidatePath(`/courses/${courseId}`);
+  revalidatePath(`/classes/${sectionId}/items/${itemId}`);
+  revalidatePath(`/classes/${sectionId}`);
   revalidatePath("/dashboard");
-  redirect(`/courses/${courseId}/lessons/${lessonId}`);
+  redirect(`/classes/${sectionId}/items/${itemId}`);
 }
 
 const questionSchema = z.object({
@@ -49,23 +48,18 @@ const questionSchema = z.object({
   points: z.coerce.number().int().min(1).default(1),
 });
 
-export interface QuizFormState {
-  error: string | null;
-  success?: string | null;
-}
-
 /**
- * Add a question with its options. Option labels arrive as repeated fields,
- * and the correct ones are flagged by index.
+ * Add a question with its options through create_quiz_question(), one
+ * transaction. The checks here repeat the function's only so the author gets
+ * a readable message instead of a raised exception.
  */
 export async function addQuizQuestion(
-  lessonId: string,
-  _prev: QuizFormState,
+  itemId: string,
+  sectionId: string,
+  _prev: FormState,
   formData: FormData,
-): Promise<QuizFormState> {
-  const profile = await getProfile();
-  if (profile.role !== "admin") redirect("/dashboard");
-
+): Promise<FormState> {
+  await requireSchool();
   const parsed = questionSchema.safeParse({
     prompt: formData.get("prompt"),
     explanation: formData.get("explanation") ?? "",
@@ -74,20 +68,14 @@ export async function addQuizQuestion(
   });
   if (!parsed.success) return { error: parsed.error.issues[0].message };
 
-  // "Correct" is flagged by the option's index in the form, so blank rows have
-  // to be dropped without renumbering the ones that remain — compacting first
-  // would shift the flags onto the wrong options.
+  // Correctness is flagged by the option's index in the form, so blank rows
+  // are dropped without renumbering the ones that remain.
   const correct = new Set(formData.getAll("option_correct").map((v) => String(v)));
   const options = formData
     .getAll("option_label")
-    .map((v, formIndex) => ({
-      label: String(v).trim(),
-      isCorrect: correct.has(String(formIndex)),
-    }))
+    .map((v, formIndex) => ({ label: String(v).trim(), isCorrect: correct.has(String(formIndex)) }))
     .filter((o) => o.label !== "");
 
-  // These are checked again inside create_quiz_question(); repeating them here
-  // is only so the admin gets a readable message instead of a raised exception.
   if (options.length < 2) return { error: "Add at least two options" };
   const correctCount = options.filter((o) => o.isCorrect).length;
   if (correctCount === 0) return { error: "Mark at least one option correct" };
@@ -95,11 +83,9 @@ export async function addQuizQuestion(
     return { error: "A single-choice question needs exactly one correct option" };
   }
 
-  // One RPC, one transaction: two separate writes could commit the question
-  // and then fail on its options, leaving students an unanswerable question.
   const supabase = await createClient();
   const { error } = await supabase.rpc("create_quiz_question", {
-    p_lesson_id: lessonId,
+    p_item_id: itemId,
     p_prompt: parsed.data.prompt,
     p_explanation: parsed.data.explanation,
     p_kind: parsed.data.kind,
@@ -109,50 +95,35 @@ export async function addQuizQuestion(
   });
   if (error) return { error: error.message };
 
-  revalidatePath(`/admin/lessons/${lessonId}`);
+  revalidatePath(`/classes/${sectionId}/items/${itemId}/edit`);
   return { error: null, success: "Question added" };
 }
 
-/**
- * Retire a question. This archives rather than deletes: students who already
- * answered it have a stored score that counted it, and deleting would cascade
- * their answers away, leaving a graded total no breakdown can account for.
- * Archived questions vanish from the player and from future grading.
- */
-export async function deleteQuizQuestion(
+/** Retire a question; past attempts keep it. */
+export async function archiveQuizQuestion(
   questionId: string,
-  lessonId: string,
+  itemId: string,
+  sectionId: string,
 ): Promise<void> {
-  const profile = await getProfile();
-  if (profile.role !== "admin") redirect("/dashboard");
-
+  await requireSchool();
   const supabase = await createClient();
   await supabase
     .from("quiz_questions")
     .update({ archived_at: new Date().toISOString() })
     .eq("id", questionId)
-    // Scoped to the lesson the admin is actually looking at, so a mismatched
-    // pair cannot retire a question belonging to a different one.
-    .eq("lesson_id", lessonId);
-  revalidatePath(`/admin/lessons/${lessonId}`);
+    .eq("item_id", itemId);
+  revalidatePath(`/classes/${sectionId}/items/${itemId}/edit`);
 }
 
-export async function setLessonPassMark(
-  lessonId: string,
+export async function setPassMark(
+  itemId: string,
+  sectionId: string,
   passMark: number,
 ): Promise<void> {
-  const profile = await getProfile();
-  if (profile.role !== "admin") redirect("/dashboard");
-
+  await requireSchool();
   const normalised = normalisePassMark(passMark);
-  if (normalised === null) {
-    throw new Error("Enter a pass mark between 0 and 100");
-  }
-
+  if (normalised === null) throw new Error("Enter a pass mark between 0 and 100");
   const supabase = await createClient();
-  await supabase
-    .from("lessons")
-    .update({ pass_mark: normalised })
-    .eq("id", lessonId);
-  revalidatePath(`/admin/lessons/${lessonId}`);
+  await supabase.from("module_items").update({ pass_mark: normalised }).eq("id", itemId);
+  revalidatePath(`/classes/${sectionId}/items/${itemId}/edit`);
 }

@@ -26,10 +26,11 @@ References: [Uxcel](https://mobbin.com/screens/519c99ca-f49e-4509-b6db-57a74154d
 
 - **Named greeting as the page title.** Babbel ("Great to see you, Alex Smith")
   and Coursera both open this way, at display size.
-- **A continue-learning card as the single dominant element**, carrying a course
-  tile, an eyebrow label, the course title, *the next lesson's name*, and the
-  primary action. Uxcel and Coursera both surface the specific next lesson
-  rather than only the course.
+- **A continue card per class as the dominant element**, carrying the course
+  title, the section name, *the next item's name*, and the primary action.
+  Uxcel and Coursera both surface the specific next step rather than only the
+  course. Teachers get today's classes instead; guardians get one block per
+  child; admins get a setup checklist until the school is running.
 - **Time remaining next to percent complete.** Uxcel shows "6% · 7h left".
   Percent alone says how far you've come; time left answers the more useful
   question of whether you can finish now, so the card shows both.
@@ -38,7 +39,7 @@ References: [Uxcel](https://mobbin.com/screens/519c99ca-f49e-4509-b6db-57a74154d
   cannot show *which* day was missed; the strip can, and today is ringed even
   when it is not yet complete.
 
-## Course detail
+## Section page
 
 References: [Magnific](https://mobbin.com/screens/ba0ea65e-e838-45b1-a9e7-c513f4b02e63),
 [Uxcel](https://mobbin.com/screens/02294a41-5e3c-4db8-9234-14e08e8b3dff),
@@ -49,14 +50,15 @@ References: [Magnific](https://mobbin.com/screens/ba0ea65e-e838-45b1-a9e7-c513f4
 - **The CTA and course facts live in a right rail** beside the syllabus, as on
   Magnific ("Start Learning" + 24 episodes / 1h 49min / Beginner) and Uxcel,
   rather than stacked above it.
-- **Every lesson row carries its duration**, right-aligned — universal across
-  the references, and the thing that makes a syllabus scannable.
-- **The next actionable lesson is marked** with an "Up next" / "Start here"
-  badge, following the "Start" pill Uxcel places on the current lesson.
-- **Locked lessons stay visible** with a padlock, as Podia does, so the whole
-  path is legible before it is unlocked.
+- **Every item row carries its duration**, right-aligned — universal across
+  the references, and the thing that makes an outline scannable.
+- **The outline is grouped by module**, since a K-12 class is taught in units,
+  with the module's unlock mode and prerequisite stated on the heading.
+- **Locked items stay visible** with a padlock, as Podia does, so the whole
+  path is legible before it is unlocked. The `module_item_catalog` view
+  exists so a student can see a locked item's title without its body.
 
-## Lesson player
+## Item page
 
 References: [Coursera](https://mobbin.com/screens/24efcb48-835b-4dc8-acc4-a502cff8078a),
 [Podia](https://mobbin.com/screens/8a156189-20c0-4b77-afa5-6dcb303fb99b),
@@ -65,17 +67,15 @@ References: [Coursera](https://mobbin.com/screens/24efcb48-835b-4dc8-acc4-a502cf
 [Skillshare](https://mobbin.com/screens/296cbc25-e43d-4a14-959d-ef91e20a46a5),
 [MasterClass](https://mobbin.com/screens/53d71db7-abdf-4566-afa9-759d35cd7a8f).
 
-- **The curriculum rail sits on the left.** Coursera, Podia, Squarespace and
-  Magnific all place it there; the rail moved from right to left to match.
-- **The rail header states where you are** — course title plus "N of M
-  completed" and a progress bar, as Podia does with "1/5 completed".
-- **Rail rows show state and duration**: check / play / circle / padlock, then
-  the lesson length, as in Skillshare's "1. Introduction 1:50".
 - **A breadcrumb replaces the back link** (Coursera, Squarespace), so the
-  course and lesson are both addressable from the player.
+  class and the item are both addressable from the player.
+- **Outline rows show state and duration**: check / play / circle / padlock,
+  then the item length, as in Skillshare's "1. Introduction 1:50".
 - **"Mark complete & continue" advances in one action**, matching Squarespace's
-  "Complete & Continue"; previous/next controls sit below the content as in
-  Magnific.
+  "Complete & Continue". A quiz item has no such button: passing it is what
+  completes it.
+- **Live-session items are a join button**, not a page of instructions. The
+  whole point of a live class in an LMS is that nobody hunts for the link.
 
 ## Onboarding and auth
 
@@ -83,12 +83,15 @@ References: [Babbel](https://mobbin.com/flows/332ff84d-d0f2-4669-bed6-7f1992729e
 [Codecademy](https://mobbin.com/flows/9e0051c2-a775-4a37-adcd-a9649df80a60),
 [Brilliant](https://mobbin.com/flows/38a82b93-ec50-4c59-9a49-433a979ec59d).
 
-- **Role is chosen first.** Brilliant opens with "I'm a learner" / "I'm a parent
-  or teacher"; signup asks student-or-parent the same way, as two option cards.
-- **A progress bar sits above the flow**, as in Babbel and Codecademy, so the
-  onboarding step reads as finite.
+- **Signup does not ask for a role.** Roles belong to a school, and the
+  school grants them. Onboarding offers two cards instead — *Join a school*
+  (paste an invitation) and *Set up a new school* — and an invitation link
+  (`/join/<token>`) lands straight on the acceptance form with the choice
+  already made.
 - **Steps are large tappable cards, one idea each**, rather than a dense bullet
   list — the shape Babbel and Codecademy use for every onboarding question.
+- **The school picker is in the shell, not in the flow.** A person at several
+  schools switches from the sidebar; onboarding only ever sets up the first.
 
 ## Navigation
 
@@ -99,7 +102,17 @@ list in a cramped header row.
 ## What was deliberately not copied
 
 The references lean heavily on gamification the schema does not support and
-this product does not need: XP totals and levels (Uxcel, Codecademy, Unity),
+a school does not want: XP totals and levels (Uxcel, Codecademy, Unity),
 leagues and leaderboards (Uxcel), badges (Unity), and certificates (Uxcel,
 Codecademy). Streaks were kept because progress data already implies them;
 the rest would be inventing a scoring model rather than presenting real data.
+What schools do want in their place — grades, attendance, announcements — is
+the next two phases of `ROADMAP.md`.
+
+## Grade bands (planned)
+
+`students.grade_level` is stored from the first invitation so the interface
+can adapt by band once Phase 3 arrives: larger targets, fewer words and
+icon-first navigation for K-2; reading-level copy and a simpler item page for
+3-5; the full layout from middle school. Nothing in the current UI branches on
+it yet.

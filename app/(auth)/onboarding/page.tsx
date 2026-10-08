@@ -1,91 +1,51 @@
 import type { Metadata } from "next";
-import { BookOpen, LineChart, Sparkles, Users } from "lucide-react";
-import { getProfile } from "@/lib/data";
-import { completeOnboarding } from "@/lib/actions/auth";
-import { Button, Eyebrow } from "@/components/ui";
+import { redirect } from "next/navigation";
+import { getContext } from "@/lib/data";
+import { Eyebrow } from "@/components/ui";
+import { AcceptInvitationForm, CreateSchoolForm } from "./onboarding-forms";
 
-export const metadata: Metadata = { title: "Welcome" };
+export const metadata: Metadata = { title: "Get started" };
 
-export default async function OnboardingPage() {
-  const profile = await getProfile();
+/**
+ * A new account is just an identity. It becomes something — an admin, a
+ * teacher, a student, a guardian — by founding a school or accepting an
+ * invitation, and that choice is this page.
+ */
+export default async function OnboardingPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ invite?: string }>;
+}) {
+  const { invite } = await searchParams;
+  const ctx = await getContext();
+  if (ctx.schools.length > 0 && !invite) redirect("/dashboard");
 
-  const steps =
-    profile.role === "parent"
-      ? [
-          {
-            icon: Users,
-            title: "Get linked to your child",
-            body: "An administrator links your account to your child's — ask your school or program admin.",
-          },
-          {
-            icon: LineChart,
-            title: "Follow their progress",
-            body: "See course completion, lesson activity, and streaks from your dashboard.",
-          },
-          {
-            icon: Sparkles,
-            title: "Stay in the loop",
-            body: "Notifications tell you about live sessions and milestones as they happen.",
-          },
-        ]
-      : [
-          {
-            icon: BookOpen,
-            title: "Browse the catalog",
-            body: "Enroll in a published course to start your path — the first lesson is always open.",
-          },
-          {
-            icon: LineChart,
-            title: "Learn in order",
-            body: "Lessons unlock as you complete the previous one, so the next step is always clear.",
-          },
-          {
-            icon: Sparkles,
-            title: "Keep your streak",
-            body: "Complete a lesson a day to build a streak and fill in your week.",
-          },
-        ];
+  const first = ctx.profile.full_name.split(" ")[0] || "there";
 
   return (
     <div className="space-y-8">
-      {/* Reference onboardings (Babbel, Codecademy) show where you are with a
-          slim bar at the top; this flow is a single step, so it reads full. */}
-      <div className="h-1 w-full overflow-hidden rounded-full bg-track">
-        <div className="h-full w-full rounded-full bg-accent" />
-      </div>
-
       <div className="text-center">
         <Eyebrow>Welcome</Eyebrow>
-        <h1 className="mt-2 text-display font-bold text-ink">
-          Hi {profile.full_name.split(" ")[0] || "there"}, here&apos;s how
-          BriteTrack works
-        </h1>
+        <h1 className="mt-2 text-display font-bold text-ink">Hi {first}, let&apos;s get you set up</h1>
+        <p className="mt-2 text-sm text-muted">
+          {invite
+            ? "You've been invited to join a school."
+            : "Join the school that invited you, or set up a new one."}
+        </p>
       </div>
 
-      <ol className="space-y-3">
-        {steps.map((step, i) => (
-          <li
-            key={step.title}
-            className="flex gap-4 rounded-card border border-line bg-raised p-4 shadow-card"
-          >
-            <div className="flex size-10 shrink-0 items-center justify-center rounded-full bg-accent-soft text-accent">
-              <step.icon className="size-5" aria-hidden />
-            </div>
-            <div>
-              <div className="text-sm font-semibold text-ink">
-                {i + 1}. {step.title}
-              </div>
-              <p className="mt-1 text-sm text-muted">{step.body}</p>
-            </div>
-          </li>
-        ))}
-      </ol>
-
-      <form action={completeOnboarding}>
-        <Button type="submit" className="w-full py-3">
-          Go to my dashboard
-        </Button>
-      </form>
+      {invite ? (
+        <AcceptInvitationForm token={invite} />
+      ) : (
+        <div className="grid gap-6">
+          <AcceptInvitationForm />
+          <div className="relative text-center text-xs uppercase tracking-wide text-subtle">
+            <span className="bg-surface px-3">or</span>
+            <div className="absolute inset-x-0 top-1/2 -z-10 border-t border-line" />
+          </div>
+          <CreateSchoolForm />
+        </div>
+      )}
     </div>
   );
 }

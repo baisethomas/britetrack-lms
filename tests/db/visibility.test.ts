@@ -1,315 +1,287 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { connect, disconnect, withRollback } from "./harness";
-import { enroll, linkParent, seedCourse } from "./fixtures";
+import { addMember, enrollStudent, linkGuardian, seedClassroom, seedSection } from "./fixtures";
 
 beforeAll(connect);
 afterAll(disconnect);
 
-async function seedSession(
-  db: Parameters<Parameters<typeof withRollback>[0]>[0],
-  courseId: string,
-): Promise<string> {
-  const [row] = await db.seed<{ id: string }>(
-    `insert into public.live_sessions
-       (course_id, title, starts_at, zoom_meeting_id, join_url, recording_url)
-     values ($1, 'Office hours', now() + interval '1 day', '999',
-             'https://zoom.example/join', 'https://zoom.example/rec')
-     returning id`,
-    [courseId],
-  );
-  return row.id;
-}
-
-describe("course visibility", () => {
-  it("shows published courses to any signed-in user", async () => {
+describe("profile visibility", () => {
+  it("lets a student see themselves and their teacher, not a classmate", async () => {
     await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      await seedCourse(db, { title: "Published" });
+      const { student, teacher, schoolId, sectionId } = await seedClassroom(db);
+      const mate = await db.createUser({ email: "mate@s1.test" });
+      await addMember(db, schoolId, mate, "student");
+      await enrollStudent(db, sectionId, mate);
 
-      const rows = await db.asUser(student, (q) =>
-        q.run<{ title: string }>("select title from public.courses"),
+      const seen = await db.asUser(student, (q) =>
+        q.run<{ id: string }>("select id from public.profiles"),
       );
-      expect(rows.map((r) => r.title)).toEqual(["Published"]);
+      expect(seen.map((p) => p.id).sort()).toEqual([student, teacher].sort());
     });
   });
 
-  it("hides draft and archived courses from students", async () => {
+  it("lets a teacher see their roster and a student's guardian, not another roster", async () => {
     await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      await seedCourse(db, { status: "draft", title: "Draft" });
-      await seedCourse(db, { status: "archived", title: "Archived" });
+      const { teacher, student, schoolId, courseId, termId } = await seedClassroom(db);
+      const guardian = await db.createUser({ email: "guardian@s1.test" });
+      await addMember(db, schoolId, guardian, "guardian");
+      await linkGuardian(db, guardian, student);
+      const colleague = await db.createUser({ email: "colleague@s1.test" });
+      await addMember(db, schoolId, colleague, "teacher");
+      const theirs = await seedSection(db, { courseId, termId, teacherId: colleague });
+      const theirKid = await db.createUser({ email: "kid2@s1.test" });
+      await addMember(db, schoolId, theirKid, "student");
+      await enrollStudent(db, theirs, theirKid);
 
-      const rows = await db.asUser(student, (q) =>
-        q.run("select id from public.courses"),
+      const seen = await db.asUser(teacher, (q) =>
+        q.run<{ id: string }>("select id from public.profiles"),
       );
-      expect(rows).toEqual([]);
+      expect(seen.map((p) => p.id).sort()).toEqual([teacher, student, guardian].sort());
     });
   });
 
-  it("hides every course from anonymous callers", async () => {
+  it("lets a guardian see their child but not another child", async () => {
     await withRollback(async (db) => {
-      await seedCourse(db);
-      const rows = await db.asAnon((q) => q.run("select id from public.courses"));
-      expect(rows).toEqual([]);
-    });
-  });
+      const { student, schoolId, sectionId } = await seedClassroom(db);
+      const guardian = await db.createUser({ email: "guardian@s1.test" });
+      await addMember(db, schoolId, guardian, "guardian");
+      await linkGuardian(db, guardian, student);
+      const mate = await db.createUser({ email: "mate@s1.test" });
+      await addMember(db, schoolId, mate, "student");
+      await enrollStudent(db, sectionId, mate);
 
-  it("shows drafts to admins", async () => {
-    await withRollback(async (db) => {
-      const admin = await db.createUser({ email: "admin@example.com" });
-      await db.setRole(admin, "admin");
-      await seedCourse(db, { status: "draft" });
-
-      const rows = await db.asUser(admin, (q) =>
-        q.run("select id from public.courses"),
+      const seen = await db.asUser(guardian, (q) =>
+        q.run<{ id: string }>("select id from public.profiles"),
       );
-      expect(rows).toHaveLength(1);
+      expect(seen.map((p) => p.id)).toContain(student);
+      expect(seen.map((p) => p.id)).not.toContain(mate);
     });
   });
 
-  it("stops a student from creating or editing courses", async () => {
+  it("lets an admin see every member of their school and nobody elsewhere", async () => {
     await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId } = await seedCourse(db);
+      const a = await seedClassroom(db, { tag: "a" });
+      const b = await seedClassroom(db, { tag: "b" });
+      const seen = await db.asUser(a.admin, (q) =>
+        q.run<{ id: string }>("select id from public.profiles"),
+      );
+      expect(seen.map((p) => p.id).sort()).toEqual([a.admin, a.teacher, a.student].sort());
+      expect(seen.map((p) => p.id)).not.toContain(b.student);
+    });
+  });
 
-      const insert = await db.asUser(student, (q) =>
-        q.attempt(
-          "insert into public.courses (title, status) values ('Mine', 'published')",
+  it("lets a user rename themselves and nobody else", async () => {
+    await withRollback(async (db) => {
+      const { student, teacher } = await seedClassroom(db);
+      const own = await db.asUser(student, (q) =>
+        q.run<{ full_name: string }>(
+          "update public.profiles set full_name = 'Sam' where id = $1 returning full_name",
+          [student],
         ),
       );
-      expect(insert.ok).toBe(false);
-
-      const update = await db.asUser(student, (q) =>
-        q.attempt("update public.courses set title = 'Hacked' where id = $1 returning id", [
-          courseId,
+      expect(own[0].full_name).toBe("Sam");
+      const other = await db.asUser(student, (q) =>
+        q.attempt("update public.profiles set full_name = 'X' where id = $1 returning id", [
+          teacher,
         ]),
       );
-      expect(update.ok && update.rows.length > 0).toBe(false);
-    });
-  });
-
-  it("stops a student from authoring lessons", async () => {
-    await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId } = await seedCourse(db);
-      await enroll(db, courseId, student);
-
-      const result = await db.asUser(student, (q) =>
-        q.attempt(
-          `insert into public.lessons (course_id, title, content, position)
-           values ($1, 'Mine', 'x', 99)`,
-          [courseId],
-        ),
-      );
-      expect(result.ok).toBe(false);
+      expect(other.ok && other.rows.length > 0).toBe(false);
     });
   });
 });
 
-describe("live session visibility", () => {
-  it("hides Zoom links from a signed-in user who is not enrolled", async () => {
-    // join_url and recording_url are effectively access tokens for the
-    // meeting, so publication status alone must not expose them.
+describe("student records", () => {
+  it("are visible to the student, guardian, teacher and admin, not to a classmate", async () => {
     await withRollback(async (db) => {
-      const outsider = await db.createUser({ email: "o@example.com", role: "student" });
-      const { courseId } = await seedCourse(db);
-      await seedSession(db, courseId);
+      const { student, teacher, admin, schoolId, sectionId } = await seedClassroom(db);
+      const guardian = await db.createUser({ email: "guardian@s1.test" });
+      await addMember(db, schoolId, guardian, "guardian");
+      await linkGuardian(db, guardian, student);
+      const mate = await db.createUser({ email: "mate@s1.test" });
+      await addMember(db, schoolId, mate, "student");
+      await enrollStudent(db, sectionId, mate);
 
-      const rows = await db.asUser(outsider, (q) =>
-        q.run("select join_url from public.live_sessions"),
+      for (const who of [student, guardian, teacher, admin]) {
+        const rows = await db.asUser(who, (q) =>
+          q.run<{ profile_id: string }>("select profile_id from public.students where profile_id = $1", [
+            student,
+          ]),
+        );
+        expect(rows).toHaveLength(1);
+      }
+      const hidden = await db.asUser(mate, (q) =>
+        q.run("select profile_id from public.students where profile_id = $1", [student]),
       );
-      expect(rows).toEqual([]);
+      expect(hidden).toHaveLength(0);
     });
   });
 
-  it("shows sessions to an enrolled student", async () => {
+  it("can be changed only by the school's admins", async () => {
     await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId } = await seedCourse(db);
-      await seedSession(db, courseId);
-      await enroll(db, courseId, student);
-
-      const rows = await db.asUser(student, (q) =>
-        q.run<{ join_url: string }>("select join_url from public.live_sessions"),
-      );
-      expect(rows).toHaveLength(1);
-      expect(rows[0].join_url).toBe("https://zoom.example/join");
-    });
-  });
-
-  it("shows sessions to a linked parent", async () => {
-    await withRollback(async (db) => {
-      const parent = await db.createUser({ email: "p@example.com", role: "parent" });
-      const child = await db.createUser({ email: "c@example.com", role: "student" });
-      const { courseId } = await seedCourse(db);
-      await seedSession(db, courseId);
-      await linkParent(db, parent, child);
-      await enroll(db, courseId, child);
-
-      const rows = await db.asUser(parent, (q) =>
-        q.run("select id from public.live_sessions"),
-      );
-      expect(rows).toHaveLength(1);
-    });
-  });
-
-  it("hides sessions from an unlinked parent", async () => {
-    await withRollback(async (db) => {
-      const parent = await db.createUser({ email: "p@example.com", role: "parent" });
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId } = await seedCourse(db);
-      await seedSession(db, courseId);
-      await enroll(db, courseId, student);
-
-      const rows = await db.asUser(parent, (q) =>
-        q.run("select id from public.live_sessions"),
-      );
-      expect(rows).toEqual([]);
-    });
-  });
-
-  it("stops a student from scheduling a session", async () => {
-    await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const { courseId } = await seedCourse(db);
-      await enroll(db, courseId, student);
-
-      const result = await db.asUser(student, (q) =>
-        q.attempt(
-          `insert into public.live_sessions (course_id, title, starts_at)
-           values ($1, 'Fake', now())`,
-          [courseId],
+      const { student, teacher, admin } = await seedClassroom(db);
+      for (const who of [student, teacher]) {
+        const result = await db.asUser(who, (q) =>
+          q.attempt(
+            "update public.students set grade_level = 12 where profile_id = $1 returning profile_id",
+            [student],
+          ),
+        );
+        expect(result.ok && result.rows.length > 0).toBe(false);
+      }
+      const byAdmin = await db.asUser(admin, (q) =>
+        q.run<{ grade_level: number }>(
+          "update public.students set grade_level = 6 where profile_id = $1 returning grade_level",
+          [student],
         ),
       );
-      expect(result.ok).toBe(false);
+      expect(byAdmin[0].grade_level).toBe(6);
     });
   });
 });
 
-describe("notifications", () => {
-  async function seedNotification(
-    db: Parameters<Parameters<typeof withRollback>[0]>[0],
-    userId: string,
-    title: string,
-  ) {
-    await db.seed(
-      "insert into public.notifications (user_id, title, body) values ($1, $2, 'body')",
-      [userId, title],
-    );
-  }
-
-  it("lets a user read only their own notifications", async () => {
+describe("guardian links", () => {
+  it("cannot be created by the guardian themselves", async () => {
     await withRollback(async (db) => {
-      const mine = await db.createUser({ email: "m@example.com", role: "student" });
-      const theirs = await db.createUser({ email: "t@example.com", role: "student" });
-      await seedNotification(db, mine, "Mine");
-      await seedNotification(db, theirs, "Theirs");
-
-      const rows = await db.asUser(mine, (q) =>
-        q.run<{ title: string }>("select title from public.notifications"),
-      );
-      expect(rows.map((r) => r.title)).toEqual(["Mine"]);
-    });
-  });
-
-  it("lets a user mark their own notification read", async () => {
-    await withRollback(async (db) => {
-      const user = await db.createUser({ email: "u@example.com", role: "student" });
-      await seedNotification(db, user, "Ping");
-
-      const result = await db.asUser(user, (q) =>
+      const { student, schoolId } = await seedClassroom(db);
+      const guardian = await db.createUser({ email: "guardian@s1.test" });
+      await addMember(db, schoolId, guardian, "guardian");
+      const result = await db.asUser(guardian, (q) =>
         q.attempt(
-          "update public.notifications set read_at = now() where user_id = $1 returning id",
-          [user],
-        ),
-      );
-      expect(result.ok).toBe(true);
-      expect(result.rows).toHaveLength(1);
-    });
-  });
-
-  it("stops a user from marking somebody else's notification read", async () => {
-    await withRollback(async (db) => {
-      const user = await db.createUser({ email: "u@example.com", role: "student" });
-      const other = await db.createUser({ email: "o@example.com", role: "student" });
-      await seedNotification(db, other, "Theirs");
-
-      const result = await db.asUser(user, (q) =>
-        q.attempt(
-          "update public.notifications set read_at = now() where user_id = $1 returning id",
-          [other],
+          "insert into public.guardian_links (guardian_id, student_id) values ($1, $2) returning id",
+          [guardian, student],
         ),
       );
       expect(result.ok && result.rows.length > 0).toBe(false);
     });
   });
 
-  it("stops a student from fabricating notifications", async () => {
+  it("are created by an admin and visible to both parties, not to strangers", async () => {
     await withRollback(async (db) => {
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const result = await db.asUser(student, (q) =>
-        q.attempt(
-          "insert into public.notifications (user_id, title) values ($1, 'Fake')",
-          [student],
+      const { student, admin, teacher, schoolId } = await seedClassroom(db);
+      const guardian = await db.createUser({ email: "guardian@s1.test" });
+      await addMember(db, schoolId, guardian, "guardian");
+
+      const created = await db.asUser(admin, (q) =>
+        q.run<{ id: string }>(
+          "insert into public.guardian_links (guardian_id, student_id) values ($1, $2) returning id",
+          [guardian, student],
         ),
       );
-      expect(result.ok).toBe(false);
+      expect(created).toHaveLength(1);
+
+      for (const who of [guardian, student]) {
+        const rows = await db.asUser(who, (q) => q.run("select id from public.guardian_links"));
+        expect(rows).toHaveLength(1);
+      }
+      const other = await db.asUser(teacher, (q) => q.run("select id from public.guardian_links"));
+      expect(other).toHaveLength(0);
     });
   });
 });
 
-describe("parent-student links", () => {
-  it("stops a parent from linking themselves to a student", async () => {
+describe("live sessions", () => {
+  it("are visible to the section's students, staff and guardians", async () => {
     await withRollback(async (db) => {
-      const parent = await db.createUser({ email: "p@example.com", role: "parent" });
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-
-      const result = await db.asUser(parent, (q) =>
-        q.attempt(
-          "insert into public.parent_student_links (parent_id, student_id) values ($1, $2)",
-          [parent, student],
-        ),
+      const { student, teacher, admin, schoolId, sectionId } = await seedClassroom(db);
+      const guardian = await db.createUser({ email: "guardian@s1.test" });
+      await addMember(db, schoolId, guardian, "guardian");
+      await linkGuardian(db, guardian, student);
+      await db.seed(
+        `insert into public.live_sessions (section_id, title, provider, join_url, starts_at)
+         values ($1, 'Class', 'zoom', 'https://zoom.us/j/1', now() + interval '1 day')`,
+        [sectionId],
       );
-      expect(result.ok).toBe(false);
-    });
-  });
-
-  it("lets an admin create a link", async () => {
-    await withRollback(async (db) => {
-      const admin = await db.createUser({ email: "admin@example.com" });
-      await db.setRole(admin, "admin");
-      const parent = await db.createUser({ email: "p@example.com", role: "parent" });
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-
-      const result = await db.asUser(admin, (q) =>
-        q.attempt(
-          `insert into public.parent_student_links (parent_id, student_id)
-           values ($1, $2) returning parent_id`,
-          [parent, student],
-        ),
-      );
-      expect(result.ok).toBe(true);
-    });
-  });
-
-  it("shows a link to both parties but not to strangers", async () => {
-    await withRollback(async (db) => {
-      const parent = await db.createUser({ email: "p@example.com", role: "parent" });
-      const student = await db.createUser({ email: "s@example.com", role: "student" });
-      const stranger = await db.createUser({ email: "x@example.com", role: "student" });
-      await linkParent(db, parent, student);
-
-      for (const viewer of [parent, student]) {
-        const rows = await db.asUser(viewer, (q) =>
-          q.run("select parent_id from public.parent_student_links"),
+      for (const who of [student, teacher, admin, guardian]) {
+        const rows = await db.asUser(who, (q) =>
+          q.run<{ join_url: string }>("select join_url from public.live_sessions"),
         );
         expect(rows).toHaveLength(1);
       }
+    });
+  });
 
-      const strangerRows = await db.asUser(stranger, (q) =>
-        q.run("select parent_id from public.parent_student_links"),
+  it("hide the join link from a student in another section and an unlinked guardian", async () => {
+    await withRollback(async (db) => {
+      const { schoolId, sectionId, courseId, termId } = await seedClassroom(db);
+      await db.seed(
+        `insert into public.live_sessions (section_id, title, provider, join_url, starts_at)
+         values ($1, 'Class', 'zoom', 'https://zoom.us/j/1', now() + interval '1 day')`,
+        [sectionId],
       );
-      expect(strangerRows).toEqual([]);
+      const other = await db.createUser({ email: "other@s1.test" });
+      await addMember(db, schoolId, other, "student");
+      await enrollStudent(db, await seedSection(db, { courseId, termId, name: "P2" }), other);
+      const guardian = await db.createUser({ email: "guardian@s1.test" });
+      await addMember(db, schoolId, guardian, "guardian");
+
+      for (const who of [other, guardian]) {
+        const rows = await db.asUser(who, (q) => q.run("select id from public.live_sessions"));
+        expect(rows).toHaveLength(0);
+      }
+    });
+  });
+
+  it("are scheduled by the section's teacher, not by its students", async () => {
+    await withRollback(async (db) => {
+      const { student, teacher, sectionId } = await seedClassroom(db);
+      const byTeacher = await db.asUser(teacher, (q) =>
+        q.run<{ id: string }>(
+          `insert into public.live_sessions (section_id, title, starts_at)
+           values ($1, 'Class', now()) returning id`,
+          [sectionId],
+        ),
+      );
+      expect(byTeacher).toHaveLength(1);
+      const byStudent = await db.asUser(student, (q) =>
+        q.attempt(
+          `insert into public.live_sessions (section_id, title, starts_at)
+           values ($1, 'Class', now()) returning id`,
+          [sectionId],
+        ),
+      );
+      expect(byStudent.ok && byStudent.rows.length > 0).toBe(false);
+    });
+  });
+});
+
+describe("notifications", () => {
+  it("are readable and markable only by their recipient, never fabricated", async () => {
+    await withRollback(async (db) => {
+      const { student, teacher } = await seedClassroom(db);
+      const [note] = await db.seed<{ id: string }>(
+        `insert into public.notifications (user_id, title) values ($1, 'Hi') returning id`,
+        [student],
+      );
+
+      const mine = await db.asUser(student, (q) =>
+        q.run<{ id: string }>("select id from public.notifications"),
+      );
+      expect(mine.map((n) => n.id)).toEqual([note.id]);
+      const theirs = await db.asUser(teacher, (q) => q.run("select id from public.notifications"));
+      expect(theirs).toHaveLength(0);
+
+      const marked = await db.asUser(student, (q) =>
+        q.run<{ id: string }>(
+          "update public.notifications set read_at = now() where id = $1 returning id",
+          [note.id],
+        ),
+      );
+      expect(marked).toHaveLength(1);
+      const forged = await db.asUser(teacher, (q) =>
+        q.attempt(
+          "update public.notifications set read_at = now() where id = $1 returning id",
+          [note.id],
+        ),
+      );
+      expect(forged.ok && forged.rows.length > 0).toBe(false);
+
+      const fabricated = await db.asUser(student, (q) =>
+        q.attempt(
+          "insert into public.notifications (user_id, title) values ($1, 'Fake') returning id",
+          [teacher],
+        ),
+      );
+      expect(fabricated.ok && fabricated.rows.length > 0).toBe(false);
     });
   });
 });

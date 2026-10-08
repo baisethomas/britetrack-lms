@@ -1,16 +1,49 @@
-export type UserRole = "admin" | "student" | "parent";
+// Row shapes for the baseline schema. Roles are scoped to a school; nobody
+// holds a global role.
+
+export type OrganizationKind = "independent" | "district" | "network";
+export type SchoolRole = "school_admin" | "teacher" | "student" | "guardian" | "staff";
 export type CourseStatus = "draft" | "published" | "archived";
-export type LessonContentType = "video" | "article" | "quiz" | "live_session";
+export type SectionStatus = "active" | "archived";
+export type EnrollmentRole = "teacher" | "co_teacher" | "aide" | "student";
+export type EnrollmentStatus = "active" | "dropped";
+export type ModuleUnlock = "free" | "sequential";
+export type ItemKind = "page" | "video" | "quiz" | "live_session" | "link";
+export type LiveProvider = "zoom" | "google_meet" | "external";
 export type NotificationType =
   | "enrollment"
-  | "lesson_unlocked"
+  | "item_unlocked"
   | "live_session"
   | "announcement"
   | "progress";
 
+export interface Organization {
+  id: string;
+  name: string;
+  kind: OrganizationKind;
+  created_at: string;
+}
+
+export interface School {
+  id: string;
+  organization_id: string;
+  name: string;
+  timezone: string;
+  grade_min: number;
+  grade_max: number;
+  created_at: string;
+}
+
+export interface Term {
+  id: string;
+  school_id: string;
+  name: string;
+  starts_on: string;
+  ends_on: string;
+}
+
 export interface Profile {
   id: string;
-  role: UserRole;
   full_name: string;
   avatar_url: string | null;
   onboarded: boolean;
@@ -18,52 +51,115 @@ export interface Profile {
   updated_at: string;
 }
 
+export interface Membership {
+  id: string;
+  school_id: string;
+  profile_id: string;
+  role: SchoolRole;
+  status: "active" | "inactive";
+}
+
+export interface Student {
+  profile_id: string;
+  school_id: string;
+  grade_level: number;
+  student_number: string | null;
+  date_of_birth: string | null;
+}
+
+export interface Invitation {
+  id: string;
+  school_id: string;
+  email: string;
+  role: SchoolRole;
+  grade_level: number | null;
+  student_id: string | null;
+  token: string;
+  expires_at: string;
+  accepted_at: string | null;
+  created_at: string;
+}
+
 export interface Course {
   id: string;
+  school_id: string;
   title: string;
   description: string;
+  subject: string | null;
+  grade_levels: number[];
+  credits: number | null;
   cover_url: string | null;
-  category: string | null;
   status: CourseStatus;
-  sequential_unlock: boolean;
   created_by: string | null;
   created_at: string;
   updated_at: string;
 }
 
-export interface Lesson {
+export interface Section {
   id: string;
+  school_id: string;
   course_id: string;
-  title: string;
-  summary: string;
-  content_type: LessonContentType;
-  content: string;
-  video_url: string | null;
-  duration_minutes: number;
-  position: number;
-  /** Percent needed to pass, for quiz lessons. */
-  pass_mark: number;
+  term_id: string;
+  name: string;
+  status: SectionStatus;
   created_at: string;
-  updated_at: string;
 }
 
-/** Row of the lesson_catalog view — browsing metadata without lesson content. */
-export type LessonSummary = Omit<
-  Lesson,
-  "content" | "video_url" | "created_at" | "updated_at"
->;
-
-export interface Enrollment {
+export interface SectionEnrollment {
   id: string;
-  course_id: string;
-  student_id: string;
+  school_id: string;
+  section_id: string;
+  profile_id: string;
+  role: EnrollmentRole;
+  status: EnrollmentStatus;
   enrolled_at: string;
   completed_at: string | null;
 }
 
-export interface LessonProgress {
+export interface Module {
   id: string;
-  lesson_id: string;
+  section_id: string;
+  title: string;
+  position: number;
+  unlock_mode: ModuleUnlock;
+  prerequisite_module_id: string | null;
+  published: boolean;
+}
+
+export interface ModuleItem {
+  id: string;
+  module_id: string;
+  position: number;
+  kind: ItemKind;
+  title: string;
+  summary: string;
+  content: string;
+  video_url: string | null;
+  url: string | null;
+  duration_minutes: number;
+  required: boolean;
+  published: boolean;
+  pass_mark: number;
+}
+
+/** Row of module_item_catalog — browsing metadata without the body. */
+export interface ModuleItemSummary {
+  id: string;
+  module_id: string;
+  section_id: string;
+  position: number;
+  kind: ItemKind;
+  title: string;
+  summary: string;
+  duration_minutes: number;
+  required: boolean;
+  published: boolean;
+  pass_mark: number;
+}
+
+export interface ModuleItemProgress {
+  id: string;
+  item_id: string;
   student_id: string;
   started_at: string;
   completed_at: string | null;
@@ -71,14 +167,14 @@ export interface LessonProgress {
 
 export interface LiveSession {
   id: string;
-  course_id: string;
+  section_id: string;
   title: string;
+  provider: LiveProvider;
+  external_meeting_id: string | null;
+  join_url: string | null;
   starts_at: string;
   duration_minutes: number;
-  zoom_meeting_id: string | null;
-  join_url: string | null;
   recording_url: string | null;
-  created_at: string;
 }
 
 export interface Notification {
@@ -97,7 +193,7 @@ export type QuizQuestionKind = "single_choice" | "multi_choice";
 /** A question as the student sees it — no answer key, no explanation. */
 export interface QuizQuestionPrompt {
   id: string;
-  lesson_id: string;
+  item_id: string;
   prompt: string;
   kind: QuizQuestionKind;
   points: number;
@@ -118,13 +214,12 @@ export interface QuizQuestion extends QuizQuestionPrompt {
 
 export interface QuizAttempt {
   id: string;
-  lesson_id: string;
+  item_id: string;
   student_id: string;
   started_at: string;
   submitted_at: string | null;
   score: number | null;
   max_score: number | null;
-  /** The threshold applied when this attempt was graded. */
   pass_mark: number | null;
   passed: boolean | null;
 }
@@ -139,7 +234,15 @@ export interface QuizReviewRow {
   is_correct: boolean;
   selected_option_ids: string[];
   correct_option_ids: string[];
-  /** Labels carried with the review, so an archived question still reads. */
   selected_labels: string[];
   correct_labels: string[];
 }
+
+/** Grade levels as people say them: -1 is pre-K, 0 is kindergarten. */
+export function gradeLabel(level: number): string {
+  if (level <= -1) return "Pre-K";
+  if (level === 0) return "K";
+  return `Grade ${level}`;
+}
+
+export const GRADE_LEVELS: number[] = Array.from({ length: 14 }, (_, i) => i - 1);

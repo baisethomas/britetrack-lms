@@ -63,7 +63,8 @@ Deno.serve(async (req) => {
       const { error } = await supabase
         .from("live_sessions")
         .update({ recording_url: shareUrl })
-        .eq("zoom_meeting_id", meetingId);
+        .eq("provider", "zoom")
+        .eq("external_meeting_id", meetingId);
       if (error) {
         console.error("Failed to store recording:", error.message);
         return new Response("Storage error", { status: 500 });

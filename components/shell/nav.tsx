@@ -5,22 +5,21 @@ import { usePathname } from "next/navigation";
 import {
   Bell,
   BookOpen,
-  GraduationCap,
+  Building2,
+  Heart,
   LayoutDashboard,
-  LineChart,
-  Upload,
+  Library,
   Users,
 } from "lucide-react";
-import type { UserRole } from "@/lib/types";
 
 const icons = {
-  dashboard: LayoutDashboard,
-  courses: BookOpen,
+  today: LayoutDashboard,
+  classes: BookOpen,
+  children: Heart,
+  people: Users,
+  courses: Library,
+  school: Building2,
   notifications: Bell,
-  users: Users,
-  upload: Upload,
-  chart: LineChart,
-  cap: GraduationCap,
 } as const;
 
 export interface NavItem {
@@ -29,25 +28,40 @@ export interface NavItem {
   icon: keyof typeof icons;
 }
 
-export function navItemsFor(role: UserRole): NavItem[] {
-  const common: NavItem[] = [
-    { href: "/dashboard", label: "Dashboard", icon: "dashboard" },
-  ];
-  if (role === "student") {
-    common.push({ href: "/courses", label: "Courses", icon: "courses" });
+export interface NavRoles {
+  isAdmin: boolean;
+  isTeacher: boolean;
+  isStudent: boolean;
+  isGuardian: boolean;
+}
+
+/**
+ * Each role gets a different shape of app, not the same app with
+ * permissions. A person with several roles sees the union.
+ */
+export function navItemsFor(roles: NavRoles): NavItem[] {
+  const items: NavItem[] = [{ href: "/dashboard", label: "Today", icon: "today" }];
+  if (roles.isStudent || roles.isTeacher) {
+    items.push({ href: "/classes", label: "My classes", icon: "classes" });
   }
-  if (role === "parent") {
-    common.push({ href: "/children", label: "My children", icon: "chart" });
+  if (roles.isGuardian) {
+    items.push({ href: "/children", label: "My children", icon: "children" });
   }
-  if (role === "admin") {
-    common.push(
-      { href: "/admin/courses", label: "Courses", icon: "courses" },
-      { href: "/admin/users", label: "Users", icon: "users" },
-      { href: "/admin/enrollments", label: "Bulk enroll", icon: "upload" },
+  if (roles.isAdmin || roles.isTeacher) {
+    items.push({ href: "/admin/courses", label: "Courses", icon: "courses" });
+  }
+  if (roles.isAdmin) {
+    items.push(
+      { href: "/admin/people", label: "People", icon: "people" },
+      { href: "/admin/school", label: "School", icon: "school" },
     );
   }
-  common.push({ href: "/notifications", label: "Notifications", icon: "notifications" });
-  return common;
+  items.push({ href: "/notifications", label: "Notifications", icon: "notifications" });
+  return items;
+}
+
+function isActive(pathname: string, href: string): boolean {
+  return pathname === href || pathname.startsWith(`${href}/`);
 }
 
 export function NavLinks({ items }: { items: NavItem[] }) {
@@ -56,8 +70,7 @@ export function NavLinks({ items }: { items: NavItem[] }) {
     <nav className="flex flex-1 flex-col gap-1" aria-label="Main">
       {items.map((item) => {
         const Icon = icons[item.icon];
-        const active =
-          pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const active = isActive(pathname, item.href);
         return (
           <Link
             key={item.href}
@@ -79,27 +92,20 @@ export function NavLinks({ items }: { items: NavItem[] }) {
 }
 
 /**
- * Mobile tab bar. The sidebar links do not survive being squeezed into a
- * phone header, so small screens get a thumb-reachable bar pinned to the
- * bottom instead — the standard pattern across the reference apps.
+ * Mobile tab bar, pinned to the bottom where thumbs are. Every destination
+ * gets a tab: the sidebar is hidden at this breakpoint, so anything omitted
+ * here would be unreachable.
  */
 export function NavTabs({ items }: { items: NavItem[] }) {
   const pathname = usePathname();
-  // Every destination gets a tab: the sidebar is hidden at this breakpoint, so
-  // anything omitted here would be unreachable. Admins have the longest menu at
-  // five, which is also the practical ceiling for a tab bar — a sixth would
-  // need an overflow entry rather than another tab.
-  const tabs = items;
-
   return (
     <nav
       aria-label="Main"
       className="sticky bottom-0 z-20 flex border-t border-line bg-raised pb-[env(safe-area-inset-bottom)] md:hidden"
     >
-      {tabs.map((item) => {
+      {items.map((item) => {
         const Icon = icons[item.icon];
-        const active =
-          pathname === item.href || pathname.startsWith(`${item.href}/`);
+        const active = isActive(pathname, item.href);
         return (
           <Link
             key={item.href}

@@ -147,7 +147,7 @@ export class TestDb {
   /**
    * Create an auth user (which fires the profile trigger) and return its id.
    * `role` goes into signup metadata, i.e. it is client-controlled — the
-   * trigger decides what the profile actually gets.
+   * trigger ignores it, and a test asserts that it does.
    */
   async createUser(options: {
     email: string;
@@ -162,14 +162,6 @@ export class TestDb {
       [options.email, JSON.stringify(metadata)],
     );
     return row.id;
-  }
-
-  /** Promote a profile directly, bypassing RLS — the admin bootstrap path. */
-  async setRole(userId: string, role: string): Promise<void> {
-    await this.seed("update public.profiles set role = $2 where id = $1", [
-      userId,
-      role,
-    ]);
   }
 
   /** Run `fn` as the signed-in user `userId` with RLS enforced. */

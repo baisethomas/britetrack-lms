@@ -4,16 +4,19 @@ Two suites, run by Vitest as separate projects.
 
 | Command | What it covers | Needs a database |
 | --- | --- | --- |
-| `npm run test:unit` | Pure logic: redirect validation, streak counting, sequential-unlock derivation | no |
-| `npm run test:db` | Every Postgres RLS policy, trigger, and admin RPC | yes |
+| `npm run test:unit` | Pure logic: redirect validation, streak counting, outline unlock derivation, harness safety guards | no |
+| `npm run test:db` | Every Postgres RLS policy, trigger, and RPC in the baseline schema | yes |
 | `npm test` | Both | yes |
 
 ## Unit tests
 
 `lib/progress.ts` and `lib/safe-redirect.ts` hold the logic worth testing in
-isolation; the data-fetching wrappers in `lib/data.ts` delegate to them. Time
-is injected (`computeStreak(dates, now)`) so streak assertions are
-deterministic.
+isolation; the data-fetching wrappers in `lib/data.ts` delegate to them.
+`deriveOutlineState()` is the client-side mirror of the database's
+`can_access_item()`, so its tests describe the same cases the database suite
+does (sequential and free modules, optional items, prerequisite modules,
+unpublished content). Time is injected (`computeStreak(dates, now)`) so streak
+assertions are deterministic.
 
 ## Database tests
 
@@ -107,29 +110,51 @@ expect(result.ok && result.rows.length > 0).toBe(false);
 
 ### What is covered
 
-- **Role assignment** — signup metadata can request `student` or `parent`
-  only; `admin` is downgraded. Users cannot promote themselves.
-- **Admin RPCs** — `admin_list_users` and `find_students_by_email` refuse
-  students *and* anonymous callers (the NULL-role case).
-- **Lesson content** — full `lessons` rows require enrollment plus sequential
-  unlock; `lesson_catalog` exposes browsing metadata without content and is
-  closed to anonymous callers.
-- **Progress integrity** — students cannot complete locked lessons, lessons in
-  courses they are not enrolled in, or lessons on another student's behalf.
-- **Course completion** — `enrollments.completed_at` is derived by trigger,
-  is not writable by students, and is cleared when a lesson is added.
-- **Visibility** — drafts, live-session Zoom links, notifications, and
-  parent-student links are each readable only by the right parties.
-- **Quiz answer keys** — `is_correct` is unreadable through every path a
-  student has: the sanitised views omit it, and the base tables yield no rows
-  to a student reading or writing them directly. Admin authoring is covered
-  too, as the positive counterpart — it runs under the same `authenticated`
-  role, so a lockdown that catches students must not catch admins. Grading,
-  recorded pass marks, archived questions, exact-match multi-choice, foreign
-  option ids, attempt forgery and review access are all covered. Completion is
-  covered from the other side too: a student cannot stamp a quiz lesson
-  complete through the generic `lesson_progress` path, by insert or by update,
-  while a non-quiz lesson still completes normally.
+One file per concern under `tests/db/`:
+
+- **`tenancy`** — founding a school makes the founder its admin and the
+  organisation's admin and ignores any role in signup metadata; one school's
+  admin cannot see another school, its people directory, or its courses;
+  nobody can grant themselves a role; a district admin reaches every school in
+  the organisation and no school admin can add one. Invitations: only the
+  invited email can accept, acceptance creates the student record with its
+  grade or the guardian link, expired and used tokens are refused, and issuing
+  is an admin's instrument only. Courses are school-wide reads and
+  author-scoped writes.
+- **`sections`** — a teacher who creates a section is enrolled as its
+  teacher; a student cannot create one; a term from another school is refused
+  and `school_id` is derived rather than trusted. A teacher's reach is their
+  own sections and not a colleague's, including rostering, and never extends
+  to granting staff roles. Enrollment integrity: members only, a teacher
+  cannot be enrolled as a student, students cannot enrol anyone. Section
+  visibility: its students, staff, admins and the students' guardians, and
+  nobody else.
+- **`item-access`** — item bodies are hidden from non-members, locked by
+  sequential order, opened by completion, not blocked by optional items, gated
+  by prerequisite modules, and hidden when unpublished or archived. Staff and
+  admins see everything; guardians see the catalogue, not bodies. The
+  `module_item_catalog` view shows locked items without bodies or video URLs
+  and refuses anonymous callers. Progress writes: a student can start and
+  complete the open item and nothing locked, nothing in another section,
+  nothing on another student's behalf, and cannot re-point a row at a locked
+  item.
+- **`completion`** — `section_enrollments.completed_at` is stamped by trigger
+  when the last required item is done, ignores optional items, clears when
+  progress is withdrawn, reopens when a required item is added, and is
+  preserved or nulled for any hand-written value from a student, a teacher or
+  an admin.
+- **`visibility`** — profiles, student records, guardian links, live-session
+  join links and notifications are each readable by exactly the right parties
+  and writable by fewer.
+- **`quiz`** — `is_correct` is unreadable through every path a student has;
+  the section's teacher authors through their own session while a colleague
+  cannot; no one, teacher included, can delete a question. Grading, recorded
+  pass marks, exact-match multi-choice, foreign option ids, repeated question
+  ids, archived questions, option-less questions, refusal for unenrolled
+  students, guardians and locked items, and review access are all covered.
+  Completion is covered from the other side: a student cannot stamp a quiz
+  item complete through progress by insert or update, cannot un-complete a
+  pass, and cannot insert or edit an attempt by hand.
 
 Every negative test has a positive counterpart, so a blanket permission
 failure cannot make the suite pass vacuously.
@@ -137,16 +162,27 @@ failure cannot make the suite pass vacuously.
 ### Keeping the suite honest
 
 Changes to authorization should be checked by weakening a policy and
-confirming the suite fails. For example, dropping `can_access_lesson` from the
-progress-insert policy must break *blocks completing a locked lesson*; relaxing
-the live-session policy to `auth.uid() is not null` must break *hides Zoom
-links from a signed-in user who is not enrolled*; and relaxing the
-`admins read options` policy to `using (true)` must break both answer-key
+confirming the suite fails. For example, dropping `can_access_item` from the
+progress-insert policy must break *blocks completing a locked item*; relaxing
+`can_manage_section` to any teacher at the school must break *is their own
+sections, not a colleague's at the same school*; relaxing the
+`staff read options` policy to `using (true)` must break both answer-key
 tests; and granting `authenticated` delete on `quiz_questions` must break
-*refuses even an admin's direct delete*.
+*refuses even a teacher's direct delete*.
 
-Assert on rows, not on error text. The answer-key tests originally expected
-`permission denied`, which made them sensitive to how access was refused rather
-than to whether the key leaked — a grant change flipped them while the key
-stayed safe. They now assert that no rows come back, which holds whichever
-layer does the refusing.
+Three failures the baseline suite caught on its first run are worth knowing
+about because they will recur in new helpers:
+
+- A `SECURITY DEFINER` helper that returns `null` for a missing row passes
+  `if not fn()` in PL/pgSQL. Helpers must `coalesce` to `false`.
+- An integrity trigger that runs as the caller sees only the rows RLS lets
+  the caller see, so a cross-school reference reads as "not found" instead of
+  "refused". Integrity triggers are definer.
+- A `STABLE` function sees the statement's snapshot, so a SELECT policy that
+  calls `is_school_admin(id)` cannot see the membership inserted by the same
+  statement. `INSERT … RETURNING` paths need a policy that checks the row's
+  own columns.
+
+Assert on rows, not on error text. A `WITH CHECK` violation raises; a `USING`
+mismatch silently matches zero rows. Tests that assert refusal use
+`returning id` and check both, which holds whichever layer does the refusing.

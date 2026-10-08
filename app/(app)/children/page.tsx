@@ -1,12 +1,12 @@
 import type { Metadata } from "next";
 import { redirect } from "next/navigation";
-import { getProfile } from "@/lib/data";
-import { ParentDashboard } from "../dashboard/parent-dashboard";
+import { requireSchool } from "@/lib/data";
+import { GuardianDashboard } from "../dashboard/guardian-dashboard";
 
 export const metadata: Metadata = { title: "My children" };
 
 export default async function ChildrenPage() {
-  const profile = await getProfile();
-  if (profile.role !== "parent") redirect("/dashboard");
-  return <ParentDashboard profile={profile} />;
+  const ctx = await requireSchool();
+  if (!ctx.isGuardian) redirect("/dashboard");
+  return <GuardianDashboard ctx={ctx} />;
 }

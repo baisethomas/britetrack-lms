@@ -1,172 +1,204 @@
 # Architecture
 
-## Why the rewrite
+BriteTrack is one Next.js App Router application on Supabase. Reads happen in
+React Server Components with the caller's session; writes go through server
+actions; authorization lives in Postgres row-level security. There is no
+separate API server and no application-level permission check that the
+database does not also enforce.
 
-The original repository accumulated scaffolding without a working product:
+The product decisions behind the shape of the data are in
+[`ROADMAP.md`](ROADMAP.md). This document is about how the code and the schema
+hold those decisions.
 
-- `backend/` was an Express + Mongoose skeleton with empty `controllers/`,
-  `models/`, `routes/`, and `middleware/` directories — while the README and
-  database docs described Supabase Postgres, not MongoDB.
-- The three Supabase edge functions were stubs whose bodies were TODO comments
-  (the Zoom webhook even compared a shared secret with `===` instead of
-  verifying Zoom's HMAC signature).
-- The GitHub Actions workflow files were empty (0 bytes).
-- There was no frontend at all.
+## The schema is a school
 
-Rather than grow that skeleton, the rewrite collapses the stack to two pieces
-that carry their weight.
+```
+organizations                 a district, or the holding entity of one school
+  organization_memberships    org_admin
+  schools                     tenant boundary for everything below
+    terms → grading_periods
+    memberships               (profile, school, role) — school_admin | teacher | student | guardian | staff
+    students                  grade level (K = 0, pre-K = -1), date of birth, student number
+    guardian_links            guardian ↔ student
+    invitations               email-bound token; creates the membership on acceptance
+    courses                   catalogue content: subject, grade levels, credits, status
+      sections                a class of a course in a term, with a roster
+        section_enrollments   teacher | co_teacher | aide | student, with completed_at
+        modules               units; unlock_mode free | sequential; optional prerequisite module
+          module_items        page | video | quiz | live_session | link; required; published; pass_mark
+            module_item_progress
+            quiz_questions → quiz_options            (the answer key)
+            quiz_attempts  → quiz_answers
+        live_sessions         provider zoom | google_meet | external; join_url; recording_url
+profiles                      one per auth user; no role column
+notifications
+```
+
+Three consequences of this shape run through everything else.
+
+**Roles are per school, not per person.** `memberships` is the only place a
+role exists. The same account can teach at one school and be a parent at
+another, and `lib/data.ts:getContext()` resolves the active school from a
+cookie and returns the roles the caller holds *there*. Signup never asks for a
+role, and `handle_new_user()` ignores any role in the signup metadata; the only
+ways to gain a role are founding a school (`create_school()`, which makes the
+founder the admin of a new organization and school) or accepting an invitation
+issued by a school admin.
+
+**A teacher's reach is their sections.** Teachers do not have school-wide
+power. `can_manage_section()` is true for the section's teacher, co-teachers
+and aides, and for the school's admins; it gates content, rosters, quizzes and
+live sessions. A teacher at the same school who is not on the section matches
+no policy and sees nothing. This is the property that makes the product
+sellable to a school, and `tests/db/sections.test.ts` proves it directly.
+
+**The school is a hard wall.** Every table is reachable only through a
+school the caller belongs to, with `is_school_member()`, `is_school_admin()`
+or a section helper that resolves to one. Organization admins can see and add
+schools across their organization and nothing else is cross-school.
 
 ## Decisions
-
-### One Next.js app, no separate API server
-
-Next.js App Router with React Server Components + server actions replaces the
-planned Express API. Reads happen in server components with the caller's
-Supabase session; writes go through server actions. This removes an entire
-deployment, a second auth story, and all client-side data fetching for core
-pages.
 
 ### Table privileges come from Supabase; RLS does the constraining
 
 A Supabase project ships `alter default privileges in schema public grant all
-on tables to anon, authenticated, service_role`, so every table these
-migrations create is already reachable by the API roles, and RLS is what
-decides which rows. That is why no table in the schema carries an explicit
-grant, and why the few `revoke` statements that do exist — on the quiz answer
-key and on `lesson_catalog` for `anon` — are meaningful: they take away
-something the platform already gave.
+on tables to anon, authenticated, service_role`, so every table the baseline
+creates is already reachable by the API roles and RLS decides which rows. No
+table carries an explicit grant. The few `revoke` statements that exist are
+therefore meaningful: the sanitised views are closed to `anon`, and the quiz
+answer-key tables are closed to `anon` outright and re-granted to
+`authenticated` *without delete*.
 
-The assumption is load-bearing for the whole schema, not for quizzes
-specifically. On a plain Postgres without those default privileges nothing in
-the app would be readable, which is what `tests/db/shim/02-supabase-post.sql`
-reproduces before the suite runs.
+`tests/db/shim/02-supabase-post.sql` reproduces those default privileges on
+plain Postgres so the suite runs against the same assumption.
 
-### Postgres RLS is the authorization layer
+### Helpers are `SECURITY DEFINER`, policies are thin
 
-Every table has row-level security; policies encode the role model
-(admin / student / parent) once, at the data layer, so neither the app nor
-future clients (mobile, integrations) can bypass it. Two `security definer`
-functions (`admin_list_users`, `find_students_by_email`) expose auth emails to
-admins only — the API roles cannot read `auth.users` directly.
+Policies call small helper functions (`is_school_admin`, `teaches_section`,
+`can_access_item`, …) that run as definer so a policy on `sections` can
+consult `memberships` without triggering the policies on `memberships` in
+turn. Two rules learned the hard way are followed throughout:
 
-### Sequential unlocking is derived, not stored — and enforced in RLS
+- A helper returns `false`, never `null`, for a row that does not exist.
+  `if not fn()` in PL/pgSQL is a no-op when `fn()` is `null`, which fails
+  open. Section helpers `coalesce` for this reason.
+- Integrity triggers (`sections_derive_school`, `section_enrollments_check`,
+  `modules_check_prerequisite`) are also definer, because a trigger otherwise
+  runs with the caller's privileges and its lookups are filtered by RLS,
+  which turns "that term is in another school" into "that term does not
+  exist" and the wrong error.
 
-A lesson is "locked" if the course has `sequential_unlock` and the previous
-lesson (by `position`) is not completed. Deriving this from `lesson_progress`
-at read time (`lib/data.ts:getLessonsWithState`) avoids an unlock-state table
-that could drift when admins reorder or insert lessons. The same rule is
-enforced at the data layer: the `can_access_lesson()` function gates
-`lesson_progress` writes, so a student cannot record progress on a locked
-lesson or on a course they are not enrolled in, even calling the API
-directly.
+### Derived state is derived, never written by clients
 
-### Streaks are computed from completions
+- **Unlocking.** An item is open when its module is published and reachable
+  (no prerequisite, or the prerequisite module is complete) and, if the
+  module is sequential, every required published item before it is complete.
+  `can_access_item()` computes this at read time and gates both the content
+  and the `module_item_progress` write policies; `lib/progress.ts:
+  deriveOutlineState()` mirrors it for rendering so the outline and the
+  database never disagree.
+- **Section completion.** `section_enrollments.completed_at` is set by
+  `sync_section_completion()` when the last required item is done and
+  cleared when progress is withdrawn or a required item is added
+  (`reset_completion_on_new_item`). The `section_enrollments_guard_completion`
+  trigger preserves or nulls the column for any client write, including an
+  admin's, so the stamp is only ever the trigger's.
+- **Streaks** are counted from completions in `lib/progress.ts`; nothing is
+  stored.
 
-The daily streak counts consecutive UTC days with at least one lesson
-completion, ending today or yesterday. No counters to maintain, nothing to
-reset by cron.
+### Sanitised views for column-level hiding
 
-### Edge functions only for what the app can't do
+RLS cannot hide a column. Where a role may see a row but not all of it, there
+is a view: `module_item_catalog` lists items without bodies or video URLs so a
+student can see a locked item's title and a guardian can see the outline;
+`quiz_question_prompts` and `quiz_option_choices` carry a quiz without
+`is_correct` or `explanation`. The views run with their owner's rights, which
+is what lets them read the answer-key table at all, so each carries its own
+access predicate in its `WHERE` clause (`can_access_item()`,
+`can_view_section()`, `can_manage_section()`) and is closed to `anon`.
 
-- `process-zoom-webhooks` — receives Zoom events (verifies the
-  `x-zm-signature` HMAC and answers the endpoint-validation challenge), and
-  writes recording URLs onto `live_sessions` with the service role.
-- `send-notification-emails` — service-role-only endpoint that records an
-  in-app notification and sends the email via Resend.
+### `SECURITY DEFINER` RPCs for the writes a policy cannot express
 
-Bulk enrollment, previously an edge-function stub, is an in-app admin form —
-it needs the admin's session and RLS, not the service role.
+- `create_school(name, organization_name, timezone)` founds an organization
+  and a school and grants the caller both admin roles in one transaction.
+- `accept_invitation(token)` checks the token against the caller's own email
+  and creates the membership, the student record (with grade level) or the
+  guardian link, as the invitation says.
+- `create_section(course, term, name)` creates a section and enrols a
+  teacher-caller as its teacher; a student is refused.
+- `school_people(school)` and `find_school_students_by_email(school, emails)`
+  expose auth emails to that school's admins only.
+- `create_quiz_question(...)`, `submit_quiz_attempt(item, answers)` and
+  `quiz_attempt_review(attempt)` are described below.
+
+### The app layer
+
+```
+app/
+  (auth)/              login, signup, onboarding (found a school or accept an invitation)
+  join/[token]         invitation landing → onboarding
+  (app)/               authenticated shell; school picker; role-aware nav
+    dashboard/         admin | teacher | student | guardian dashboards
+    classes/           my sections; section page (outline, roster, live sessions)
+      [sectionId]/build         module and item authoring
+      [sectionId]/items/[itemId]   item page; quiz player; quiz editor
+    children/          guardian view of each child's classes
+    admin/             school settings and terms, course catalogue, people and invitations
+lib/
+  data.ts              getContext(), section outlines, rosters, sessions, children
+  progress.ts          outline derivation, streaks
+  actions/             auth, onboarding, school, sections, learning, quiz
+  supabase/            browser / server / middleware clients
+components/            UI primitives, shell, outline, session list
+supabase/
+  migrations/00001_baseline.sql   the schema and every policy
+  functions/           Zoom recording webhook; notification email fan-out
+```
+
+Role-specific dashboards are separate server components chosen by
+`getContext()`; a person with several roles at a school sees the union of
+their navigation. There is no client-side data fetching on core pages.
+
+### Edge functions only for what the app cannot do
+
+- `process-zoom-webhooks` verifies Zoom's HMAC signature and stores the
+  recording URL on the matching `live_sessions` row (`provider = 'zoom'`,
+  `external_meeting_id`).
+- `send-notification-emails` records an in-app notification and sends the
+  email through Resend, under the service role.
 
 ## Quizzes: the answer key never leaves the database
 
-A quiz lesson has questions and options, and the load-bearing requirement is
-that a student cannot discover which option is correct. RLS has no column-level
-security, so hiding a column is not something a policy can express. Instead:
+A quiz item has questions and options, and the load-bearing requirement is
+that a student cannot discover which option is correct while the quiz is open.
 
-- `quiz_questions` and `quiz_options` are **admin-only through RLS**, and
-  `REVOKE`d from `anon` outright. They cannot be revoked from `authenticated`:
-  Supabase runs every signed-in caller under that one role, so admins author
-  through it too, and a blanket revoke denies them before any policy is
-  evaluated. The admin-only policies are what exclude students, who match no
-  policy and so read no rows.
-- Students read `quiz_question_prompts` and `quiz_option_choices`, views that
-  simply do not contain `is_correct` or `explanation`. They inherit the
-  lesson's own access rule via `can_access_lesson()`.
-- Grading happens in `submit_quiz_attempt()`, a `SECURITY DEFINER` function —
-  the only thing permitted to read the key. It re-checks lesson access itself
-  rather than trusting the caller, discards option ids that belong to another
-  question, and scores all-or-nothing per question.
-- `quiz_attempts` has **no student INSERT or UPDATE policy**. Scores exist only
-  because the grading function produced them, so a pass cannot be forged the
-  way a hand-written row could be.
-- `quiz_attempt_review()` returns the key and explanations, but only for an
-  attempt that is already submitted and only to its owner, their linked
-  parents, or an admin.
+- `quiz_questions` and `quiz_options` are readable and writable through RLS
+  only by people who `can_manage_section()` the item's section. A student
+  matches no policy and reads no rows. Supabase runs every signed-in caller as
+  `authenticated`, so the tables cannot be revoked from that role without
+  locking teachers out too; the policies are what exclude students.
+- Students read `quiz_question_prompts` and `quiz_option_choices`, which omit
+  `is_correct` and `explanation` and inherit `can_access_item()`.
+- Grading happens in `submit_quiz_attempt()`, the only code permitted to read
+  the key. It re-checks item access itself, discards option ids that belong to
+  another question, unions repeated question ids, scores all-or-nothing per
+  question, and records the pass mark it graded against.
+- `quiz_attempts` has **no INSERT or UPDATE policy**. Scores exist only
+  because grading produced them.
+- Passing is what completes a quiz item. The progress write policies refuse a
+  completion stamp on a quiz item outright, so a student who has merely
+  reached an unlocked quiz cannot stamp it done and walk into the next item;
+  `submit_quiz_attempt()`, running as definer, is the one path that grants it.
+- `quiz_attempt_review()` returns the key, explanations and option labels for
+  an attempt that is already submitted, to its owner, their guardians, the
+  section's staff and the school's admins.
+- Retiring a question sets `archived_at`; there is no delete policy and no
+  delete grant on either table, so past attempts stay explicable.
+- `create_quiz_question()` writes a question and its options in one call and
+  validates them (two options, at least one correct, exactly one for
+  single-choice) so a half-authored question can never be served.
 
-The guarantee is therefore about a quiz *in progress*: nothing a student can
-read while answering reveals the key. Review deliberately reveals it
-afterwards, which is what makes a wrong answer worth anything pedagogically.
-Combined with unlimited retakes that means a determined student can submit an
-empty attempt, read the answers, and retake to pass — so a quiz here is a
-learning checkpoint, not an invigilated exam. Unlimited retakes alone already
-imply that: all-or-nothing scoring and no attempt limit means enough tries
-eventually pass. If a quiz ever needs to gate something that matters, the
-lever is attempt limits or withholding review until a pass, not tightening the
-answer-key path.
-
-Passing is what completes a quiz lesson — there is no "mark complete" button —
-so a quiz genuinely gates the next lesson under sequential unlock. That claim
-has to hold in the database or it holds nowhere: the generic `lesson_progress`
-policies gate writes on `can_access_lesson()` alone, so a student who had
-merely *reached* an unlocked quiz could otherwise stamp it complete and walk
-into the next lesson. The student write policies now refuse a completion stamp
-on a quiz lesson outright. Starting one still records progress; only the
-completion is withheld, and `submit_quiz_attempt()` — running as definer —
-remains the one path that can grant it. Retakes are
-unlimited; every attempt is kept.
-
-Two consequences of keeping attempts follow from that. Each attempt stores the
-`pass_mark` it was graded against, so moving a lesson's threshold later cannot
-make an old result claim it needed a mark it never did. And retiring a question
-sets `archived_at` rather than deleting it: a delete would cascade its
-`quiz_answers` away while the attempt's stored score still counted them.
-Archived questions disappear from the player and from future grading; past
-results keep them. The database enforces that rather than trusting the UI to:
-there is no DELETE policy on `quiz_questions` or `quiz_options` and no delete
-grant, so retirement through `archived_at` is the only route an admin has. A
-retention guarantee the database does not enforce is only a comment. `quiz_attempt_review()` therefore returns option *labels*
-alongside their ids: the student-facing views no longer carry an archived
-question's options, so a review that resolved ids against the live quiz would
-render a retired answer blank.
-
-Authoring a question is a single `create_quiz_question()` call rather than two
-writes, because a question that committed without its options would be shown to
-students with nothing to choose. Its validation — two options, at least one
-correct, exactly one for single-choice — lives in the function so it binds any
-caller, not only the form. Grading also skips a question that has no options at
-all, so a half-authored one cannot silently make a pass unreachable.
-
-## Data model
-
-```
-profiles (role: admin|student|parent, onboarded)
-parent_student_links (parent_id, student_id)
-courses (status: draft|published|archived, sequential_unlock)
-lessons (course_id, position, content_type: video|article|quiz|live_session)
-enrollments (course_id, student_id, completed_at)
-lesson_progress (lesson_id, student_id, started_at, completed_at)
-live_sessions (course_id, zoom_meeting_id, join_url, recording_url)
-notifications (user_id, type, read_at)
-quiz_questions (lesson_id, prompt, explanation, kind, points, position)
-quiz_options (question_id, label, is_correct, position)
-quiz_attempts (lesson_id, student_id, score, max_score, passed, submitted_at)
-quiz_answers (attempt_id, question_id, selected_option_ids, is_correct)
-```
-
-`lessons.pass_mark` is the percent of available points a quiz lesson requires.
-
-`enrollments.completed_at` is derived by a database trigger
-(`sync_enrollment_completion`) when the last lesson of a course is completed —
-students have no UPDATE policy on enrollments, so it cannot be forged. Adding
-a lesson to a course clears affected completion stamps
-(`reset_completion_on_new_lesson`).
+The guarantee is about a quiz *in progress*. Review reveals the key
+afterwards, and retakes are unlimited, so a quiz here is a learning
+checkpoint, not an invigilated exam. The gradebook in Phase 2 adds attempt
+limits and withheld review where a quiz needs to count.

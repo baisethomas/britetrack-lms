@@ -1,37 +1,92 @@
 /**
  * Pure progress/unlocking logic, kept free of Supabase so it can be tested
  * directly. `lib/data.ts` fetches the rows and delegates the derivation here.
+ *
+ * The rules mirror can_access_item() in the schema exactly; the database is
+ * the authority, and this exists so the UI can show a locked item as locked
+ * without a round trip per item.
  */
 
-export interface PositionedLesson {
+export interface OutlineModule {
   id: string;
   position: number;
+  unlock_mode: "free" | "sequential";
+  prerequisite_module_id: string | null;
+  published: boolean;
 }
 
-export interface LessonState {
+export interface OutlineItem {
+  id: string;
+  module_id: string;
+  position: number;
+  required: boolean;
+  published: boolean;
+}
+
+export interface ItemState {
   completed: boolean;
   locked: boolean;
 }
 
+export interface ModuleState {
+  /** Every required, published item is complete. */
+  completed: boolean;
+  /** The prerequisite module, if any, is complete. */
+  reachable: boolean;
+}
+
 /**
- * Annotate lessons (ordered by position) with completed/locked state.
- *
- * A lesson is locked when the course unlocks sequentially and the lesson
- * immediately before it is not complete. An already-completed lesson is never
- * locked, so learners can always revisit finished material.
+ * Annotate a section's modules and items with completed/locked state for one
+ * student. An item is locked when its module is unreachable, or when the
+ * module is sequential and a required item before it is not complete.
+ * Optional items never gate anything. A completed item is never locked, so
+ * finished material stays revisitable.
  */
-export function deriveLessonState<T extends PositionedLesson>(
-  lessons: readonly T[],
-  completedLessonIds: ReadonlySet<string>,
-  sequentialUnlock: boolean,
-): (T & LessonState)[] {
-  let previousCompleted = true;
-  return lessons.map((lesson) => {
-    const completed = completedLessonIds.has(lesson.id);
-    const locked = sequentialUnlock ? !previousCompleted && !completed : false;
-    previousCompleted = completed;
-    return { ...lesson, completed, locked };
-  });
+export function deriveOutlineState<M extends OutlineModule, I extends OutlineItem>(
+  modules: readonly M[],
+  items: readonly I[],
+  completedItemIds: ReadonlySet<string>,
+): { modules: (M & ModuleState)[]; items: (I & ItemState)[] } {
+  const byModule = new Map<string, I[]>();
+  for (const item of items) {
+    const list = byModule.get(item.module_id) ?? [];
+    list.push(item);
+    byModule.set(item.module_id, list);
+  }
+  for (const list of byModule.values()) list.sort((a, b) => a.position - b.position);
+
+  const moduleComplete = (moduleId: string): boolean =>
+    (byModule.get(moduleId) ?? []).every(
+      (item) => !item.required || !item.published || completedItemIds.has(item.id),
+    );
+
+  const annotatedModules = [...modules]
+    .sort((a, b) => a.position - b.position)
+    .map((module) => ({
+      ...module,
+      completed: moduleComplete(module.id),
+      reachable:
+        module.prerequisite_module_id === null ||
+        moduleComplete(module.prerequisite_module_id),
+    }));
+  const moduleById = new Map(annotatedModules.map((m) => [m.id, m]));
+
+  const annotatedItems: (I & ItemState)[] = [];
+  for (const [moduleId, list] of byModule) {
+    const parent = moduleById.get(moduleId);
+    let gateOpen = true;
+    for (const item of list) {
+      const completed = completedItemIds.has(item.id);
+      const reachable = Boolean(parent && parent.published && parent.reachable);
+      const locked =
+        !completed &&
+        (!reachable || (parent?.unlock_mode === "sequential" && !gateOpen));
+      annotatedItems.push({ ...item, completed, locked });
+      if (item.required && item.published && !completed) gateOpen = false;
+    }
+  }
+
+  return { modules: annotatedModules, items: annotatedItems };
 }
 
 /** UTC calendar day (YYYY-MM-DD) of a Date. */
@@ -40,14 +95,9 @@ function dayKey(date: Date): string {
 }
 
 /**
- * Count consecutive UTC days with at least one lesson completion, ending
- * today or yesterday.
- *
- * Yesterday counts as the end of a live streak so a learner who has not
- * studied *yet today* does not see their streak drop to zero mid-day.
- *
- * @param completedAt ISO timestamps of completed lessons, in any order.
- * @param now Reference instant — injected so the result is deterministic.
+ * Count consecutive UTC days with at least one completion, ending today or
+ * yesterday. Yesterday counts as the end of a live streak so a learner who
+ * has not studied *yet today* does not see their streak drop to zero mid-day.
  */
 export function computeStreak(
   completedAt: readonly string[],
@@ -69,10 +119,7 @@ export function computeStreak(
   return streak;
 }
 
-/**
- * Percentage complete, 0–100. A course with no lessons reads as 0% rather
- * than dividing by zero.
- */
+/** Percentage complete, 0–100; an empty set reads as 0 rather than dividing by zero. */
 export function completionPercent(completed: number, total: number): number {
   if (total <= 0) return 0;
   return (completed / total) * 100;
@@ -87,27 +134,24 @@ export function formatDuration(minutes: number): string {
   return rest === 0 ? `${hours}h` : `${hours}h ${rest}m`;
 }
 
-const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"] as const;
-
 export interface StreakDay {
+  /** Single-letter weekday, Monday first. */
   label: string;
+  /** YYYY-MM-DD (UTC). */
   date: string;
   active: boolean;
   isToday: boolean;
 }
 
-/**
- * The trailing seven days, oldest first, flagged with whether a lesson was
- * completed. Reference dashboards show the week as dots rather than only a
- * streak count, so a missed day is visible instead of merely implied.
- */
+const WEEKDAY_LABELS = ["S", "M", "T", "W", "T", "F", "S"];
+
+/** The trailing seven UTC days, oldest first, flagged with activity. */
 export function buildStreakDays(
   completedAt: readonly string[],
   now: Date = new Date(),
 ): StreakDay[] {
   const active = new Set(completedAt.map((value) => value.slice(0, 10)));
   const today = dayKey(now);
-
   return Array.from({ length: 7 }, (_, index) => {
     const cursor = new Date(now);
     cursor.setUTCDate(cursor.getUTCDate() - (6 - index));
@@ -123,9 +167,8 @@ export function buildStreakDays(
 
 /**
  * A pass mark the database will accept, or null if the input is not a number
- * at all. The column is an int constrained to 0..100, so an empty or
- * non-numeric field has to be rejected rather than clamped — NaN survives
- * Math.max and Math.min and would reach the check constraint intact.
+ * at all. NaN survives Math.max and Math.min, so it has to be refused rather
+ * than clamped.
  */
 export function normalisePassMark(value: number): number | null {
   if (!Number.isFinite(value)) return null;
