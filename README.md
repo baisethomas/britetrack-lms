@@ -105,7 +105,7 @@ npx supabase secrets set RESEND_API_KEY=... ZOOM_WEBHOOK_SECRET_TOKEN=...
 - `npm run lint` — ESLint (flat config, Next presets)
 - `npm run typecheck` — strict TypeScript
 - `npm run build` — production build
-- `npm run test:unit` — pure logic
+- `npm run test:unit` — pure logic, action validation, middleware, and the server/client boundary check
 - `npm run test:db` — every RLS policy against a real Postgres
   (`npm run db:test:up` first, or point `DATABASE_URL` at any disposable
   Postgres 16 whose name contains the word `test`)

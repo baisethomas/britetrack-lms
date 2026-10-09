@@ -4,19 +4,39 @@ Two suites, run by Vitest as separate projects.
 
 | Command | What it covers | Needs a database |
 | --- | --- | --- |
-| `npm run test:unit` | Pure logic: redirect validation, streak counting, outline unlock derivation, harness safety guards | no |
+| `npm run test:unit` | Pure logic, server-action validation against a faked Supabase, the middleware's route gating, and a static check of the server/client module boundary | no |
 | `npm run test:db` | Every Postgres RLS policy, trigger, and RPC in the baseline schema | yes |
 | `npm test` | Both | yes |
 
 ## Unit tests
 
-`lib/progress.ts` and `lib/safe-redirect.ts` hold the logic worth testing in
-isolation; the data-fetching wrappers in `lib/data.ts` delegate to them.
-`deriveOutlineState()` is the client-side mirror of the database's
-`can_access_item()`, so its tests describe the same cases the database suite
-does (sequential and free modules, optional items, prerequisite modules,
-unpublished content). Time is injected (`computeStreak(dates, now)`) so streak
-assertions are deterministic.
+`lib/progress.ts`, `lib/safe-redirect.ts`, `lib/roster.ts` and the pure
+helpers in `lib/data.ts` hold the logic worth testing in isolation; the
+data-fetching wrappers delegate to them. `deriveOutlineState()` is the
+client-side mirror of the database's `can_access_item()`, so its tests
+describe the same cases the database suite does (sequential and free modules,
+optional items, prerequisite modules, unpublished content). Time is injected
+(`computeStreak(dates, now)`) so streak assertions are deterministic.
+
+Three further groups under `tests/unit/`:
+
+- **`actions/`** — the server actions' form validation and payload shaping,
+  with Supabase replaced by the fake in `helpers/supabase-mock.ts`. These
+  assert what reaches the database (a quiz question's labels and correctness
+  flags stay aligned when blank rows are dropped; an invitation's email is
+  lower-cased; a roster paste is parsed) and what a badly filled form is
+  told. RLS decides who may do these things; that is the database suite's job.
+- **`middleware`** — an anonymous request to an app route is sent to
+  `/login` with `next` set, public routes pass, and a refreshed session
+  cookie is forwarded to the browser.
+- **`server-client-boundary`** — a static scan of `app/`, `components/` and
+  `lib/` for the React Server Components mistakes that `next build` accepts
+  and the first request then throws on: a server module importing a function
+  or constant (anything but a component or a type) from a `"use client"`
+  module; a client module importing `next/headers`, the server Supabase
+  client or the data layer; and a `"use server"` module exporting anything
+  but async functions and types. The first of these once took down every
+  page in the app shell.
 
 ## Database tests
 
@@ -155,6 +175,30 @@ One file per concern under `tests/db/`:
   Completion is covered from the other side: a student cannot stamp a quiz
   item complete through progress by insert or update, cannot un-complete a
   pass, and cannot insert or edit an attempt by hand.
+
+- **`terms`** — terms and grading periods are readable by every member of
+  the school and by nobody elsewhere, managed by its admins only, must end
+  after they start, and a term with sections in it cannot be deleted.
+- **`authoring`** — modules and items are added, edited and removed by the
+  section's teacher, a co-teacher and the school's admin, and by no student,
+  colleague or aide; a prerequisite must come from the same section and never
+  the module itself. A teacher can rename or archive their section but only an
+  admin can delete it; a section cannot be moved to another school's course,
+  nor created by a direct insert that would bypass `create_section()`. A
+  school's details and an organisation's are edited by their admins only, and
+  a school admin cannot promote themselves to the organisation.
+- **`membership-status`** — a dropped enrollment removes the section, its
+  items and progress writes without erasing the row; a dropped teacher can
+  neither manage nor see it; an inactive membership removes a person from the
+  school (courses, the school row, admin powers), blocks enrolling them, and
+  is reactivated by accepting a fresh invitation. Roles are per school for a
+  person at two; signup copies the name from metadata; deleting the auth user
+  cascades through the profile.
+- **`schema-invariants`** — properties every migration must keep: RLS enabled
+  and at least one policy on every public table, `search_path` pinned on every
+  `SECURITY DEFINER` function, an anonymous caller seeing zero rows in every
+  table even when every table has data, and `updated_at` maintained by
+  trigger wherever the column exists.
 
 Every negative test has a positive counterpart, so a blanket permission
 failure cannot make the suite pass vacuously.

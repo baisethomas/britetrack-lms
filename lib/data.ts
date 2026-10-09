@@ -222,11 +222,14 @@ export async function getSectionOutline(
 
 /** The first open, unfinished item — where "continue" should go. */
 export function nextItem(outline: SectionOutline): (ModuleItemSummary & ItemState) | undefined {
-  const order = new Map(outline.modules.map((m, i) => [m.id, i]));
+  // Order by the module's own position rather than its index, so the pick
+  // does not depend on how the caller happened to sort the array.
+  const order = new Map(outline.modules.map((m) => [m.id, m.position]));
   return [...outline.items]
     .sort(
       (a, b) =>
-        (order.get(a.module_id) ?? 0) - (order.get(b.module_id) ?? 0) ||
+        (order.get(a.module_id) ?? Number.MAX_SAFE_INTEGER) -
+          (order.get(b.module_id) ?? Number.MAX_SAFE_INTEGER) ||
         a.position - b.position,
     )
     .find((i) => !i.completed && !i.locked && i.published);

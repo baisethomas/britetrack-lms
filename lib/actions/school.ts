@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { z } from "zod";
 import { createClient } from "@/lib/supabase/server";
 import { requireSchool } from "@/lib/data";
+import { parseEmailList } from "@/lib/roster";
 
 export interface FormState {
   error: string | null;
@@ -219,12 +220,7 @@ export async function rosterByEmail(
   const csv = String(formData.get("emails") ?? "").trim();
   if (!csv) return { error: "Paste at least one email" };
 
-  const emails = [...new Set(
-    csv
-      .split(/[\r\n,;]+/)
-      .map((line) => line.trim().toLowerCase())
-      .filter((e) => e.includes("@")),
-  )];
+  const emails = parseEmailList(csv);
   if (emails.length === 0) return { error: "No valid email addresses found" };
 
   const supabase = await createClient();
