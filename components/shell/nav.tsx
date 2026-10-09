@@ -12,7 +12,9 @@ import {
   Users,
 } from "lucide-react";
 
-const icons = {
+import type { NavIcon, NavItem } from "./nav-items";
+
+const icons: Record<NavIcon, typeof LayoutDashboard> = {
   today: LayoutDashboard,
   classes: BookOpen,
   children: Heart,
@@ -20,45 +22,7 @@ const icons = {
   courses: Library,
   school: Building2,
   notifications: Bell,
-} as const;
-
-export interface NavItem {
-  href: string;
-  label: string;
-  icon: keyof typeof icons;
-}
-
-export interface NavRoles {
-  isAdmin: boolean;
-  isTeacher: boolean;
-  isStudent: boolean;
-  isGuardian: boolean;
-}
-
-/**
- * Each role gets a different shape of app, not the same app with
- * permissions. A person with several roles sees the union.
- */
-export function navItemsFor(roles: NavRoles): NavItem[] {
-  const items: NavItem[] = [{ href: "/dashboard", label: "Today", icon: "today" }];
-  if (roles.isStudent || roles.isTeacher) {
-    items.push({ href: "/classes", label: "My classes", icon: "classes" });
-  }
-  if (roles.isGuardian) {
-    items.push({ href: "/children", label: "My children", icon: "children" });
-  }
-  if (roles.isAdmin || roles.isTeacher) {
-    items.push({ href: "/admin/courses", label: "Courses", icon: "courses" });
-  }
-  if (roles.isAdmin) {
-    items.push(
-      { href: "/admin/people", label: "People", icon: "people" },
-      { href: "/admin/school", label: "School", icon: "school" },
-    );
-  }
-  items.push({ href: "/notifications", label: "Notifications", icon: "notifications" });
-  return items;
-}
+};
 
 function isActive(pathname: string, href: string): boolean {
   return pathname === href || pathname.startsWith(`${href}/`);

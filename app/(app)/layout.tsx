@@ -5,7 +5,8 @@ import { getContext, initialsOf } from "@/lib/data";
 import { signOut } from "@/lib/actions/auth";
 import { switchSchool } from "@/lib/actions/onboarding";
 import { createClient } from "@/lib/supabase/server";
-import { NavLinks, NavTabs, navItemsFor } from "@/components/shell/nav";
+import { NavLinks, NavTabs } from "@/components/shell/nav";
+import { navItemsFor } from "@/components/shell/nav-items";
 import { Badge } from "@/components/ui";
 
 const ROLE_LABEL: Record<string, string> = {
