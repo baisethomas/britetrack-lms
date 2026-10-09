@@ -37,3 +37,6 @@ next-env.d.ts
 *.tsbuildinfo
 .vercel
 .env*.local
+
+# Supabase CLI scratch
+supabase/.temp/
